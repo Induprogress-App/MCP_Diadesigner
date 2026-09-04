@@ -60,6 +60,19 @@ Point your MCP client at `dist14/bin.js` directly (see
 
 Restart your MCP client to apply the change.
 
+### Project-scoped config
+
+The repo root also carries a committed `.mcp.json` using the same shape, so
+an MCP client that supports project-scoped servers (e.g. Claude Code) picks
+up the `diadesigner` server automatically for this checkout — no per-client
+setup needed. Edit its `--diadesigner-path` / `--workspace` args if your
+install or workspace live somewhere other than `D:\MCP_Diadesigner`.
+
+After changing dependencies or pulling `dist14/` updates, `npm install` then
+`npm test` (61 assertions, run against the real server over stdio) is the
+fastest way to confirm the server, the bridge, and the local DIADesigner
+install all still agree with each other.
+
 ### Command-line arguments
 
 - `-d, --diadesigner-path <path>` — path to `DIADesigner.exe`. Optional: the

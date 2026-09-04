@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Project-scoped `.mcp.json` at the repo root so an MCP client picks up the
+  `diadesigner` server automatically on this checkout, pointing at
+  `dist14/bin.js` and the local DIADesigner 1.14 install.
+
+### Verified
+- Fresh `npm install` plus `npm test` (61 assertions over real stdio) against
+  a DIADesigner 1.14 install at
+  `C:\Program Files (x86)\Delta Industrial Automation\DIAStudio\DIADesigner 1.14`,
+  confirming installation detection, the x86 .NET bridge (`check_bridge`),
+  and `.diade` decryption all work unmodified on a new machine.
+
 ## [1.2.0] - 2026-08-29
 
 ### Added
