@@ -158,3 +158,84 @@ Not yet verified on this machine:
   supported by current version of DIADesigner"*) for every controller tried,
   which blocked producing a reference project. This looks like an installation
   or device-description issue rather than something in this toolkit.
+- The generated PLCopen shape *was* round-tripped through DIADesigner's own
+  **Edit > Import** command against a real project. It surfaced a real bug
+  (now fixed: the from-scratch `.EXPORT` template was missing `<fileHeader>`
+  / `<contentHeader>`, which DIADesigner's importer indexes into without a
+  bounds check), but Import still failed even with the fix, immediately
+  triggering DIADesigner's own "Anomaly detected" crash-report prompt.
+  **Root cause, confirmed**: DIADesigner's own `Edit > Export` on a real POU
+  writes an AES-encrypted container, not plain PLCopen XML — the plaintext
+  `.EXPORT` files shipped under `Programming/Resource/*/Standard.EXPORT` are
+  library resources, unrepresentative of what Export produces for project
+  content. Import expects that encrypted shape, so a hand-built plain-XML
+  file can't succeed through that menu regardless of how correct its PLCopen
+  structure is. This is a hard limit on the `.EXPORT` workflow for pushing
+  content into a live project via Import specifically — reading and offline
+  editing of `.EXPORT` files (this toolkit's actual PLCopen tools) is
+  unaffected.
+- **Confirmed working path to add real content to a project**: DIADesigner's
+  own `New Program` (right-click the `Program` folder in the tree,
+  `PRG_NewProgram`) offers ST as a language choice — DVP-series devices do
+  support Structured Text, disproving the earlier suspicion that this
+  project's Ladder-heavy style meant no ST support. Creating an empty ST
+  POU there, then pasting generated ST source directly into its code editor
+  and saving, works. Undeclared identifiers prompt once each ("Add a
+  Variable to POU") — point these at an existing global tag table (e.g.
+  `Default_Tag_Table`), not the POU's own local scope, and they resolve to
+  the project's real shared variables (verified: the live variable count via
+  `read_program_memory` didn't change after "adding" 3 apparently-new
+  variables, meaning DIADesigner linked them to variables that already
+  existed elsewhere in the project). `Check` on the resulting POU reported
+  0 errors, 0 warnings.
+- **Per-POU network extraction: investigated, not solved.** `read_program_memory`
+  reads every `IspProject.NetWorkData` resident on the heap (the ISP
+  compiler's flat model, eagerly loaded for the whole project) but that class
+  carries no back-reference to which POU it belongs to. `coilPattern` sidesteps
+  this by matching on the coil's *name*, which only works when a POU's coils
+  share a distinctive naming convention -- and even then it is not reliable:
+  re-deriving `falowniki` from first principles (via the newly-added
+  `list_live_pous`, see above) showed it actually owns 44 networks, not the
+  ~30 `coilPattern: "falow"` had captured -- some (`alarm_falownika_pompy_*`)
+  actually belong to a *different* POU (`alarmy`) that merely shares the
+  naming convention, while others belonging to `falowniki`
+  (`MYCIE_WLACZONE_ST*` set/reset pairs) don't contain "falow" at all and were
+  silently missed. Five different avenues for a *real* POU→network
+  correlation were tried against the live process and all came up empty on an
+  idle document: `NetworkCanvasData.CompilerRefGuid` (always
+  `00000000-...`, even immediately after first opening the POU -- likely
+  wired only for a project-compare/diff feature, not general editing),
+  `BlockCanvasData.ModelInfo` (always null), `NetworkCanvasData.rowData`
+  (always null), and `ContactData.currentBlock`/`.parentBlock` →
+  `.ParentNetwork` (the block reference itself populates once nested in a
+  branch, but its own `ParentNetwork` back-reference is null). One promising
+  but unproven lead: `IspProject.NetWorkData` objects belonging to the same
+  POU appear **address-contiguous** when enumerating the ClrMD heap, in the
+  same order as `list_live_pous`' own POU enumeration -- consistent with
+  in-order parsing at project load. This could support a count-based slice
+  (`list_live_pous`' `networkCount` gives an exact per-POU boundary) but
+  needs a reliable way to exclude stale/duplicate `NetWorkData` copies
+  (confirmed to exist -- e.g. re-`Check`ing a POU leaves extra copies behind)
+  before it can be trusted for something that ends up as real control logic.
+  Not implemented; `read_program_memory`'s `-PouName` bridge parameter exists
+  in `DiaMemoryReader.cs` but currently returns
+  `PouName-scoped extraction is not yet implemented` rather than a wrong
+  answer.
+- **`read_program_memory` / `convert_ld_to_st` grid reconstruction, fixed and
+  verified**: the previous reader only looked at `NetWorkData.iList`'s
+  top-level elements, so any rung built from a `BranchData` (a parallel OR
+  branch) or a nested `type="fb"` branch (a `=`/`<>`/relational compare
+  block) had that entire piece silently dropped — the tool would emit a
+  plausible-looking but wrong ST expression with no indication anything was
+  missing. `bridge/DiaMemoryReader.cs` now walks `BranchData` grids
+  recursively (rows are OR alternatives, columns within a row are AND) and
+  resolves an `fb` branch's `InVariablesMacro` + `Block.typeName` into the
+  actual comparison and its operands. Verified by hand-tracing the raw grid
+  for `falownik_pompy_ST1_bieg2` against a screenshot of the same rung open
+  in DIADesigner's Ladder editor (parallel `=6`/`=9`/`=2`/`<>8` compare
+  blocks, several with a trailing series contact, feeding a shared vertical
+  bus) and confirming an exact match, then running the same path across all
+  30 falownik-station rungs in that project with 0 unresolved terms. A
+  genuinely unrecognized element (e.g. a timer or other library
+  function-block instance) now comes through as an explicit
+  `(* UNRESOLVED: ... *)` marker in the generated ST instead of vanishing.

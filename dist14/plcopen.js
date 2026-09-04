@@ -581,9 +581,29 @@ async function createStructure(config, exportFilePath, spec) {
     return { path: document.fullPath, backupPath, action, name: spec.name };
 }
 // ------------------------------------------------------- export and import ---
+// DIADesigner's own importer indexes into fileHeader/contentHeader without an
+// existence check, so an .EXPORT missing them throws
+// "Specified argument was out of range. Parameter name: index" instead of a
+// readable error. Shape verified against Delta's own shipped exports (e.g.
+// Programming/Resource/AS_Series/*/Standard.EXPORT).
 const EMPTY_EXPORT = (newline) => [
-    '<?xml version="1.0" encoding="utf-8"?>',
+    '<?xml version="1.0" encoding="utf-8" standalone="yes"?>',
     "<project>",
+    '  <fileHeader companyName="" productName="" productVersion="" creationDateTime="0001-01-01T00:00:00" />',
+    '  <contentHeader name="">',
+    "    <coordinateInfo>",
+    '      <pageSize x="0" y="1" />',
+    "      <fbd>",
+    '        <scaling x="0" y="1" />',
+    "      </fbd>",
+    "      <ld>",
+    '        <scaling x="0" y="1" />',
+    "      </ld>",
+    "      <sfc>",
+    '        <scaling x="0" y="1" />',
+    "      </sfc>",
+    "    </coordinateInfo>",
+    "  </contentHeader>",
     "  <types>",
     "    <dataTypes>",
     "    </dataTypes>",

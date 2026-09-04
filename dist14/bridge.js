@@ -42,6 +42,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.POWERSHELL_X86 = void 0;
 exports.callBridge = callBridge;
+exports.listLivePous = listLivePous;
 exports.readProgramMemory = readProgramMemory;
 exports.convertLdToSt = convertLdToSt;
 exports.exportProjectGui = exportProjectGui;
@@ -162,6 +163,68 @@ async function findDiaDesignerPid(titleMatch) {
     if (!Number.isFinite(pid))
         return null;
     return { pid, title: sep >= 0 ? line.slice(sep + 1) : "" };
+}
+/**
+ * Lists every POU resident in a running DIADesigner process's memory: name,
+ * worksheet type (the language signal -- LDWorkSheet/STWorkSheet/...), and its
+ * own network count. Read-only (ClrMD). Useful to plan work across a project's
+ * POUs even though read_program_memory/convert_ld_to_st can't yet isolate one
+ * POU's networks by name (use coilPattern there instead).
+ */
+async function listLivePous(config, options = {}) {
+    const script = memoryReaderScriptPath();
+    let pid = options.pid;
+    let title = "";
+    if (!pid) {
+        const found = await findDiaDesignerPid(options.titleMatch);
+        if (!found) {
+            return { ok: false, error: "No running DIADesigner window found. Open the project in DIADesigner first." };
+        }
+        pid = found.pid;
+        title = found.title;
+    }
+    const outFile = path.join(os.tmpdir(), `dia14-pous-${pid}-${Date.now()}.json`);
+    const args = [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        script,
+        "-TargetPid",
+        String(pid),
+        "-Out",
+        outFile,
+        "-ListPous"
+    ];
+    const result = await (0, interop_js_1.runCommand)(exports.POWERSHELL_X86, args, {
+        cwd: (0, interop_js_1.getInstallDir)(config),
+        timeoutMs: 300000,
+        maxOutputBytes: 1024 * 1024,
+        env: { TEMP: os.tmpdir(), TMP: os.tmpdir() }
+    });
+    let raw;
+    try {
+        raw = await (0, promises_1.readFile)(outFile, "utf8");
+    }
+    catch {
+        throw new Error(`Memory reader produced no result. exit=${result.code} stderr=${result.stderr.trim().slice(0, 400)}`);
+    }
+    finally {
+        try {
+            await (0, promises_1.rm)(outFile, { force: true });
+        }
+        catch {
+            // best-effort cleanup
+        }
+    }
+    let pous;
+    try {
+        pous = JSON.parse(raw);
+    }
+    catch {
+        return { ok: false, error: `Memory reader returned malformed JSON: ${raw.slice(0, 400)}`, pid, processTitle: title };
+    }
+    return { ok: true, pid, processTitle: title, pous };
 }
 /**
  * Reads the decrypted Ladder program out of a running DIADesigner process's heap

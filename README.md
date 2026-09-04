@@ -119,8 +119,11 @@ but DIADesigner remains the authority on whether code is valid.
   *running* DIADesigner process's memory (ClrMD, read-only); the project must
   be open in DIADesigner first
 - `convert_ld_to_st` — reconstructs Structured Text from the Ladder networks
-  read via `read_program_memory`, optionally isolated to one POU/station with
-  a coil-name regex
+  read via `read_program_memory`: series contacts AND, parallel branches OR
+  (real nested branches, not flattened), and `=`/`<>`/relational compare
+  blocks resolve to their actual operands; anything unrecognized is left as
+  a visible `(* UNRESOLVED: ... *)` marker. Optionally isolated to one
+  POU/station with a coil-name regex
 
 ### Program content (PLCopen `.EXPORT`)
 

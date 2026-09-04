@@ -13,7 +13,9 @@ param(
   [Parameter(Mandatory=$true)][int]$TargetPid,
   [Parameter(Mandatory=$true)][string]$Out,
   [int]$MaxNetworks = 8000,
-  [switch]$OnlyCommented
+  [switch]$OnlyCommented,
+  [string]$PouName = '',
+  [switch]$ListPous
 )
 $ErrorActionPreference='Continue'
 
@@ -54,7 +56,11 @@ try {
 }
 
 try {
-  $json = [DiaMemoryReader]::Run($TargetPid, $MaxNetworks, [bool]$OnlyCommented)
+  if ($ListPous) {
+    $json = [DiaMemoryReader]::ListPous($TargetPid)
+  } else {
+    $json = [DiaMemoryReader]::Run($TargetPid, $MaxNetworks, [bool]$OnlyCommented, $PouName)
+  }
   [IO.File]::WriteAllText($Out, $json, (New-Object Text.UTF8Encoding($false)))
 } catch {
   [IO.File]::WriteAllText($Out, ('{"ok":false,"error":"read failed: ' + (($_.Exception.GetBaseException().Message) -replace '"','\"' -replace "[\r\n]",' ') + '"}'), (New-Object Text.UTF8Encoding($false)))

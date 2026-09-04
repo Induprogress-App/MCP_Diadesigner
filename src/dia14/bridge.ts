@@ -140,6 +140,91 @@ export interface MemoryReadResult extends BridgeResult {
   outputFile?: string;
 }
 
+export interface LivePou {
+  name: string;
+  /** Runtime type of the POU's code worksheet (e.g. "LDWorkSheet", "STWorkSheet") -- the language signal. */
+  worksheet: string;
+  /**
+   * Network count from the POU's own UI/canvas layer (POU.codeBody.codeWorkSheet.graphicCanvasData._networks),
+   * which is reliably scoped to that POU. There is currently no supported way to pull the matching
+   * IspProject.NetWorkData objects for one POU in isolation -- see read_program_memory's pouName limitation.
+   */
+  networkCount: number;
+}
+
+export interface ListLivePousResult extends BridgeResult {
+  pid?: number;
+  processTitle?: string;
+  pous?: LivePou[];
+}
+
+/**
+ * Lists every POU resident in a running DIADesigner process's memory: name,
+ * worksheet type (the language signal -- LDWorkSheet/STWorkSheet/...), and its
+ * own network count. Read-only (ClrMD). Useful to plan work across a project's
+ * POUs even though read_program_memory/convert_ld_to_st can't yet isolate one
+ * POU's networks by name (use coilPattern there instead).
+ */
+export async function listLivePous(
+  config: DiaConfig,
+  options: { titleMatch?: string; pid?: number } = {}
+): Promise<ListLivePousResult> {
+  const script = memoryReaderScriptPath();
+  let pid = options.pid;
+  let title = "";
+  if (!pid) {
+    const found = await findDiaDesignerPid(options.titleMatch);
+    if (!found) {
+      return { ok: false, error: "No running DIADesigner window found. Open the project in DIADesigner first." };
+    }
+    pid = found.pid;
+    title = found.title;
+  }
+
+  const outFile = path.join(os.tmpdir(), `dia14-pous-${pid}-${Date.now()}.json`);
+  const args = [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    script,
+    "-TargetPid",
+    String(pid),
+    "-Out",
+    outFile,
+    "-ListPous"
+  ];
+  const result = await runCommand(POWERSHELL_X86, args, {
+    cwd: getInstallDir(config),
+    timeoutMs: 300000,
+    maxOutputBytes: 1024 * 1024,
+    env: { TEMP: os.tmpdir(), TMP: os.tmpdir() }
+  });
+
+  let raw: string;
+  try {
+    raw = await readFile(outFile, "utf8");
+  } catch {
+    throw new Error(
+      `Memory reader produced no result. exit=${result.code} stderr=${result.stderr.trim().slice(0, 400)}`
+    );
+  } finally {
+    try {
+      await rm(outFile, { force: true });
+    } catch {
+      // best-effort cleanup
+    }
+  }
+
+  let pous: LivePou[];
+  try {
+    pous = JSON.parse(raw) as LivePou[];
+  } catch {
+    return { ok: false, error: `Memory reader returned malformed JSON: ${raw.slice(0, 400)}`, pid, processTitle: title };
+  }
+  return { ok: true, pid, processTitle: title, pous };
+}
+
 /**
  * Reads the decrypted Ladder program out of a running DIADesigner process's heap
  * (via ClrMD, read-only). The project must be open in DIADesigner. Returns the

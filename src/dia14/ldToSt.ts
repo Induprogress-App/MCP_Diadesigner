@@ -1,90 +1,102 @@
 /**
  * LD -> ST reconstruction.
  *
- * Turns the flat network form read out of a running DIADesigner process
+ * Turns the network tree read out of a running DIADesigner process
  * (IspProject.NetWorkData, surfaced by read_program_memory) into Structured
- * Text. Each network is one rung: a row of contacts feeding a coil.
+ * Text. Each network is one rung: a `terms` AND-chain feeding a coil, where
+ * a term can itself be an `or` of AND-chains (a parallel branch) or a
+ * `compare` (a "=" / "<>" / relational function-block instance -- DIADesigner
+ * resolves these against a nested InVariablesMacro, not a flat contact list).
  *
- *   - simple / series rungs (contact -> coil, SET/RST, rising/falling edges)
- *     reconstruct exactly;
- *   - rungs that carry a parallel branch (BranchData) are emitted best-effort
- *     with the contacts AND-combined and flagged for the user to verify the
- *     branch is really a series (AND) and not a parallel (OR);
- *   - rungs driven by a function block (timer / comparator) cannot be reduced
- *     to a boolean contact expression and are emitted as a commented note.
- *
- * This is intentionally the same logic proven against the MyjniaDIA test
- * project; keeping it in TypeScript means it can be iterated without
- * recompiling the ClrMD reader.
+ * DiaMemoryReader.cs walks the real grid (BranchData rows = OR alternatives,
+ * columns within a row = AND) instead of collapsing everything it doesn't
+ * recognize into a flat AND chain, so the expression built here matches what
+ * DIADesigner's own Ladder editor draws -- including nested branches and
+ * comparator blocks, not just simple series contacts. Anything the reader
+ * still can't resolve comes through as an explicit `unknown` term with a
+ * description, so it surfaces as a visible TODO in the generated ST instead
+ * of silently vanishing.
  */
 
-export interface LdElement {
-  kind: "contact" | "coil" | "block";
-  id: number;
-  name: string;
-  negated?: boolean;
-  edge?: string;
-  storage?: string;
-  api?: number;
-  var?: string;
-}
+export type LdTerm =
+  | { t: "contact"; var: string; negated?: boolean; edge?: string }
+  | { t: "compare"; op: string; lhs: string; rhs: string }
+  | { t: "or"; rows: LdTerm[][] }
+  | { t: "unknown"; desc: string };
 
 export interface LdNetwork {
   comment: string;
-  branch?: boolean;
-  elements: LdElement[];
+  coil: string;
+  storage?: string;
+  terms: LdTerm[];
 }
 
 export interface StNetwork {
   st: string;
   coil?: string;
-  category: "exact" | "branch" | "block" | "skipped";
+  category: "ok" | "unresolved" | "skipped";
 }
 
-const BRANCH_TAG = "  (* siec z rownolegla galezia -- sprawdz AND/OR *)";
 const PLACEHOLDER_COMMENT = "Enter comment here…";
 
-function contactTerm(c: LdElement): string {
-  let term = c.name;
-  if (c.edge === "rising") term = `R_TRIG(${c.name})`;
-  else if (c.edge === "falling") term = `F_TRIG(${c.name})`;
-  if (c.negated) term = `NOT ${term}`;
-  return term;
+function edgeWrap(varName: string, edge: string | undefined): string {
+  if (edge === "rising") return `R_TRIG(${varName})`;
+  if (edge === "falling") return `F_TRIG(${varName})`;
+  return varName;
 }
 
-/** Converts one network to a Structured Text line (plus classification). */
-export function networkToSt(net: LdNetwork): StNetwork {
-  const coil = net.elements.find((e) => e.kind === "coil" && e.name);
-  if (!coil) return { st: "", category: "skipped" };
+/** True if this term (or anything nested in it) is an `unknown` we couldn't resolve. */
+function hasUnknown(term: LdTerm): boolean {
+  if (term.t === "unknown") return true;
+  if (term.t === "or") return term.rows.some((row) => row.some(hasUnknown));
+  return false;
+}
 
-  const contacts = net.elements.filter((e) => e.kind === "contact" && e.name);
-  const blocks = net.elements.filter((e) => e.kind === "block");
+function termToSt(term: LdTerm): string {
+  switch (term.t) {
+    case "contact": {
+      const base = edgeWrap(term.var, term.edge);
+      return term.negated ? `NOT ${base}` : base;
+    }
+    case "compare":
+      return `(${term.lhs} ${term.op} ${term.rhs})`;
+    case "or": {
+      const rowExprs = term.rows.map((row) => andChain(row)).filter((s) => s.length > 0);
+      if (rowExprs.length === 0) return "TRUE";
+      if (rowExprs.length === 1) return rowExprs[0];
+      return `(${rowExprs.join(" OR ")})`;
+    }
+    case "unknown":
+      return `(* UNRESOLVED: ${term.desc.replace(/\*\)/g, ")")} *)`;
+  }
+}
+
+function andChain(terms: LdTerm[]): string {
+  const parts = terms.map(termToSt).filter((s) => s.length > 0);
+  if (parts.length === 0) return "";
+  if (parts.length === 1) return parts[0];
+  return parts.join(" AND ");
+}
+
+/** Converts one network to a Structured Text assignment (plus classification). */
+export function networkToSt(net: LdNetwork): StNetwork {
+  if (!net.coil) return { st: "", category: "skipped" };
+
+  const unresolved = net.terms.some(hasUnknown);
   const comment =
     net.comment && net.comment !== PLACEHOLDER_COMMENT ? `    (* ${net.comment} *)\n` : "";
 
-  if (blocks.length > 0) {
-    const blockDesc = blocks.map((b) => `${b.name}/api${b.api ?? "?"}`).join(", ");
-    const inputs = contacts.map(contactTerm).join(", ") || "(none)";
-    const note =
-      `    (* NET zawiera blok funkcyjny: ${blockDesc} -- ZWERYFIKUJ *)\n` +
-      `    (* wejscia: ${inputs} -> ${coil.name} *)`;
-    return { st: comment + note, coil: coil.name, category: "block" };
-  }
-
-  const terms = contacts.map(contactTerm);
-  const expr =
-    terms.length === 0 ? "TRUE" : terms.length === 1 ? terms[0] : `(${terms.join(" AND ")})`;
+  const expr = net.terms.length === 0 ? "TRUE" : andChain(net.terms);
 
   let rhs: string;
-  if (coil.storage === "set") rhs = `IF ${expr} THEN ${coil.name} := TRUE; END_IF;`;
-  else if (coil.storage === "reset") rhs = `IF ${expr} THEN ${coil.name} := FALSE; END_IF;`;
-  else rhs = `${coil.name} := ${expr};`;
+  if (net.storage === "set") rhs = `IF ${expr} THEN ${net.coil} := TRUE; END_IF;`;
+  else if (net.storage === "reset") rhs = `IF ${expr} THEN ${net.coil} := FALSE; END_IF;`;
+  else rhs = `${net.coil} := ${expr};`;
 
-  const tag = net.branch ? BRANCH_TAG : "";
   return {
-    st: `${comment}    ${rhs}${tag}`,
-    coil: coil.name,
-    category: net.branch ? "branch" : "exact"
+    st: `${comment}    ${rhs}`,
+    coil: net.coil,
+    category: unresolved ? "unresolved" : "ok"
   };
 }
 
@@ -97,7 +109,7 @@ export interface StBuildOptions {
 
 export interface StBuildResult {
   document: string;
-  stats: { total: number; exact: number; branch: number; block: number; skipped: number };
+  stats: { total: number; ok: number; unresolved: number; skipped: number };
   coils: string[];
 }
 
@@ -107,12 +119,20 @@ export function buildStDocument(networks: LdNetwork[], options: StBuildOptions =
   const pou = options.pouName || "CONVERTED_ST";
   const lines: string[] = [];
   const coils: string[] = [];
-  const stats = { total: 0, exact: 0, branch: 0, block: 0, skipped: 0 };
+  const stats = { total: 0, ok: 0, unresolved: 0, skipped: 0 };
+  // ClrMD sometimes walks two live copies of the same rung (e.g. an editor's
+  // working buffer alongside the saved one); keep only the first occurrence
+  // per coil so the generated POU doesn't assign the same variable twice.
+  const seenCoils = new Set<string>();
 
   for (const net of networks) {
     const converted = networkToSt(net);
     if (converted.category === "skipped") continue;
     if (re && (!converted.coil || !re.test(converted.coil))) continue;
+    if (converted.coil) {
+      if (seenCoils.has(converted.coil)) continue;
+      seenCoils.add(converted.coil);
+    }
     stats.total++;
     stats[converted.category]++;
     if (converted.coil) coils.push(converted.coil);
@@ -122,11 +142,15 @@ export function buildStDocument(networks: LdNetwork[], options: StBuildOptions =
   const header =
     `(*==============================================================================\n` +
     `  ${pou} -- rekonstrukcja LD -> ST (odczyt z pamieci odszyfrowanego programu)\n` +
-    `  Metoda: ClrMD read-only -> IspProject.NetWorkData -> ST.\n` +
-    `  Sieci: ${stats.total} (dokladne=${stats.exact}, z galezia=${stats.branch}, z blokiem=${stats.block}).\n` +
+    `  Metoda: ClrMD read-only -> IspProject.NetWorkData grid (rows=OR, columns=AND,\n` +
+    `  nested "fb" branches = compare blocks) -> ST.\n` +
+    `  Sieci: ${stats.total} (ok=${stats.ok}, niezweryfikowane=${stats.unresolved}).\n` +
     (re ? `  Filtr cewki: /${options.coilPattern}/i\n` : "") +
-    `  Uwaga: sieci "z galezia" maja styki polaczone AND -- zweryfikuj AND/OR;\n` +
-    `         sieci "z blokiem" (timer/komparator) sa oznaczone do uzupelnienia.\n` +
+    (stats.unresolved > 0
+      ? `  UWAGA: ${stats.unresolved} siec(i) zawiera fragmenty oznaczone "UNRESOLVED" --\n` +
+        `         DiaMemoryReader nie rozpoznal elementu (np. blok API biblioteki, nie\n` +
+        `         prosty komparator). Zweryfikuj je recznie w DIADesignerze.\n`
+      : "") +
     `==============================================================================*)\n\n` +
     `PROGRAM ${pou}\nVAR\n    (* zmienne globalne projektu -- patrz tabela symboli *)\nEND_VAR\n\n`;
 
