@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Scope: this repo currently ships the DIADesigner 1.14 MCP server only.
+# The CODESYS / DIADesigner 1.13 sources live alongside it but aren't part
+# of this push yet (already maintained/working elsewhere) -- keep their
+# build output and root-level sources out until that's ready to publish.
+/dist/
+/src/bin.ts
+/src/server.ts
+/src/server.txt
+/src/codesys_interop.ts
+/src/diadesigner13_bin.ts
+/src/diadesigner13_server.ts
+/src/diadesigner13_interop.ts
+/src/diadesigner13_export_editor.ts
+/src/diadesigner13_symbol_editor.ts
+
+# Customer/test project data -- proprietary PLC programs, not toolkit code.
+/testing/
+
+# Vendor scripting-engine reference dump kept for local development only.
+/scriptDoc.txt
+
+# Stray draft, not the canonical README.
+/README.md.enhanced
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+
+# Local build info
+*.tsbuildinfo

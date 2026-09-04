@@ -1,0 +1,68 @@
+{
+  "name": "@codesys/mcp-toolkit",
+  "version": "1.2.0",
+  "description": "Model Context Protocol (MCP) servers for the CODESYS platform and for Delta DIADesigner 1.14",
+  "main": "dist/server.js",
+  "bin": {
+    "codesys-mcp-tool": "./dist/bin.js",
+    "diadesigner-mcp-tool": "./dist14/bin.js",
+    "diadesigner13-mcp-tool": "./dist/diadesigner13_bin.js"
+  },
+  "files": [
+    "dist",
+    "dist14",
+    "bridge",
+    "docs",
+    "examples",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.dia14.json",
+    "build:dia14": "tsc -p tsconfig.dia14.json",
+    "build:codesys": "tsc",
+    "start": "node ./dist14/bin.js",
+    "test": "node ./test/e2e.js"
+  },
+  "keywords": [
+    "codesys",
+    "diadesigner",
+    "delta",
+    "mcp",
+    "modelcontextprotocol",
+    "plc",
+    "automation",
+    "programming",
+    "plcopen"
+  ],
+  "author": "Your Name <your.email@example.com>",
+  "license": "MIT",
+  "type": "commonjs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/johannesPettersson80/codesys-mcp-toolkit.git"
+  },
+  "homepage": "https://github.com/johannesPettersson80/codesys-mcp-toolkit#readme",
+  "bugs": {
+    "url": "https://github.com/johannesPettersson80/codesys-mcp-toolkit/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "os": [
+    "win32"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.10.2",
+    "axios": "^1.6.8",
+    "commander": "^11.1.0",
+    "yargs": "^17.7.2",
+    "zod": "^3.24.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.1",
+    "@types/yargs": "^17.0.33",
+    "fast-xml-parser": "^5.0.0",
+    "typescript": "^5.5.3"
+  }
+}

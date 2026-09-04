@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "diadesigner": {
+      "command": "node",
+      "args": [
+        "C:\\Path\\To\\Diadesigner-mcp-toolkit\\dist14\\bin.js",
+        "--diadesigner-path",
+        "C:\\Program Files (x86)\\Delta Industrial Automation\\DIAStudio\\DIADesigner 1.14\\DIADesigner.exe",
+        "--workspace",
+        "D:\\YourProjectRoot"
+      ]
+    }
+  }
+}

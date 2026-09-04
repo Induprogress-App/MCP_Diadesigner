@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "diadesigner13_local": {
+      "command": "diadesigner13-mcp-tool",
+      "args": [
+        "--diadesigner-path",
+        "C:\\Program Files (x86)\\Delta Industrial Automation\\DIAStudio\\DIADesigner 1.13\\DIADesigner.exe",
+        "--workspace",
+        "D:\\SynologyDrive\\YourProjectRoot"
+      ]
+    }
+  }
+}
