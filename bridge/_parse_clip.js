@@ -270,9 +270,17 @@ function parseNetwork(net) {
   const statements = [];
   let i = 0;
   let legGuardExtra = []; // extra AND-terms accumulated since last leg boundary (guard contacts local to outLink)
+  let legRiskyGrid = null; // set if a rowCount>1 grid marco appears in this leg -- see parseCondition's comment
   while (i < outElems.length) {
     const e = outElems[i];
-    if (e.name === 'marco' || e.name === 'emptyObject' || e.name === 'regionLogicCommand' || e.name === 'label') { i++; continue; } // visual/layout only
+    if (e.name === 'marco') {
+      if (e.attrs.type === 'normal' && e.attrs.rowCount && parseInt(e.attrs.rowCount, 10) > 1) {
+        legRiskyGrid = `columnCount=${e.attrs.columnCount} rowCount=${e.attrs.rowCount}`;
+      }
+      i++;
+      continue; // otherwise visual/layout only
+    }
+    if (e.name === 'emptyObject' || e.name === 'regionLogicCommand' || e.name === 'label') { i++; continue; } // visual/layout only
     if (e.name === 'verticalLine') { i++; continue; } // rare in outLink; ignore defensively
     if (e.name === 'contact') {
       legGuardExtra.push(contactTerm(e));
@@ -282,10 +290,14 @@ function parseNetwork(net) {
     if (e.name === 'coil') {
       const varName = textOf(child(e, 'variable')).trim();
       const storage = e.attrs.storage || 'none';
-      const guardParts = [guardBase, legGuardExtra.length ? legGuardExtra.join(' AND ') : null].filter(Boolean);
-      const guard = guardParts.length ? guardParts.join(' AND ') : 'TRUE';
+      let guardParts = [guardBase, legGuardExtra.length ? legGuardExtra.join(' AND ') : null].filter(Boolean);
+      let guard = guardParts.length ? guardParts.join(' AND ') : 'TRUE';
+      if (legRiskyGrid) {
+        guard = `/* UNRESOLVED GRID in outLink leg: ${legRiskyGrid} -- AND/OR structure not auto-derivable, verify against the source Ladder diagram: ${guard} */`;
+      }
       statements.push({ kind: 'coil', varName, storage, guard });
       legGuardExtra = [];
+      legRiskyGrid = null;
       i++;
       continue;
     }
