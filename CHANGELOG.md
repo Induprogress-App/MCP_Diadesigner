@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (critical, live re-verification session)
+- **The `rowCount` heuristic from the previous fix was wrong and has been replaced.**
+  Direct visual inspection of the Ladder canvas (zooming into the actual diagram in
+  DIADesigner) proved that `rowCount` does not reliably indicate branch count, or
+  even whether branching exists at all: three different real networks with
+  `rowCount=="1"` turned out to be genuine OR grids (each contact/term
+  independently bridging the same left rail to the same right bus -- textbook
+  ladder OR), including one -- mycie_st1's "PRACA_ST1 OR alarm-rising-edge" guard,
+  feeding 8 coils -- that had been shipped live as AND based on domain-reasoning
+  alone. The real, now-confirmed rule: the *presence* of a trailing
+  `<marco type="normal" columnCount="N" .../>` at all (regardless of `rowCount`)
+  means the preceding top-level contact/compare terms are OR'd, because a true
+  AND-series carries no such marco in its rootLink whatsoever. Boundary detection
+  now also tracks the marco's exact position in the sequence (not just prefix vs.
+  suffix relative to the whole list), since a shared AND-term can appear *after*
+  the OR-group too (confirmed on mycie_st1's credit-increment rung: 3 OR'd
+  payment-trigger contacts, THEN the grid marco, THEN a 4th
+  "zezwolenie_pracy_stanowisko1" contact ANDed onto the result). A further wrinkle:
+  a compare immediately following a contact merges into that contact's own branch
+  only when this "contact+compare" pairing repeats 2+ times (confirmed on
+  promocje's 7 "day contact + (SR397=n)" pairs); a single such adjacency is treated
+  as coincidental (a shared prefix that merely precedes the first of several
+  independent compare-only branches, confirmed on alarmy's "NOT Lizcznik" prefix
+  before 6 independent `godziny_pracy_stN > 350` branches) and is left
+  unmerged. **This bug had already shipped wrong logic to five live POUs** --
+  `mycie_st1ST`, `WEJSCIAST`, `alarmyST`, `promocjeST`, `programyST` -- all
+  re-verified against the real diagrams and re-pasted with corrected AND/OR
+  structure; all still `Check` to 0 errors.
+- `D+`/`D-`/`D*`/`D/` (Delta's double-word/32-bit arithmetic mnemonics) have the
+  same problem as `F+`/`F-` (a `+`/`-`/`*`//` character breaks ST identifier
+  parsing) and now map to the same plain operators. Confirmed live: cascaded into
+  a bare "D" being treated as an undeclared identifier and dozens of further
+  errors in `STATYSTYKI`.
+- `INC`/`DINC` (Delta's increment-in-place mnemonics: one register, no separate
+  output pin) are also undeclared identifiers in this compiler, same as
+  `FLT`/`INT`/`D+` -- but unlike those, the semantics are unambiguous plain ST, so
+  `INC(x)` now emits `x := x + 1;` directly with no `VERIFY` marker at all (no
+  vendor-specific risk). This single fix cleared most of a 65-error cascade in
+  `STATYSTYKI` (which calls `INC`/`DINC` roughly twenty times).
+- `WSUM(base, N)` (sum of N consecutive registers from a base address) and
+  `SER(base, from, N)` (find max value + its index among N registers) are also
+  undeclared identifiers, with no safe generic expansion -- `WSUM` was hand-fixed
+  in `STATYSTYKI` to an explicit sum since the station variable names were already
+  known (`LICZNIK_INNE_ST1 + ... + LICZNIK_INNE_ST6`); `SER` (and the two lines
+  reading its result via `E0`/`@E0` indexed addressing) is left as a flagged,
+  unresolved gap needing Delta's own DVP ST instruction reference -- the last two
+  live compile errors in `STATYSTYKIST`.
+- Converted `STATYSTYKI` (36 networks, coin/card/counter statistics) to
+  `STATYSTYKIST` -- 2 remaining errors, both on the one documented `SER` gap
+  above.
+
 ### Added
 - `bridge/_parse_clip.js` -- a standalone Node parser for DIADesigner's clipboard
   "Network" XML format (select all networks in a POU's Ladder editor, Ctrl+C; the

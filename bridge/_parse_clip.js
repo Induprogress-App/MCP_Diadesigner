@@ -109,40 +109,72 @@ function contactTerm(c) {
 // Returns {expr, i} where i is the index just past the consumed run (stops at a <coil>,
 // or at end of the parent, or -- for outLink parsing -- lets the caller decide leg boundaries).
 //
-// Some genuine parallel-branch (OR) grids carry NO <verticalLine/> separators at all --
-// instead the whole link ends with a <marco type="normal" columnCount="N" rowCount="M" .../>
-// summarizing the grid shape. A grid with rowCount==1 is just a plain single-row
-// AND-series (confirmed on a real network: "PRACA_ST1 AND alarm-rising-edge",
-// columnCount=2 rowCount=1 -- genuinely AND, not two branches) and is left untouched.
-// A grid with rowCount>1 DOES hold real parallel branches, but the row/column
-// bookkeeping isn't fully understood yet -- a first attempt at inferring OR-groups
-// from columnCount and contact-boundaries produced a *plausible-looking* result for
-// a 7-day-of-week check (promocje/PROMOCJA_ZAL) that can't actually be confirmed
-// without seeing the source Ladder diagram, and that same heuristic silently
-// mis-guessed AND-as-OR on other, already-verified-correct networks when re-run
-// broadly. Guessing AND/OR structure is exactly the class of bug this whole
-// conversion effort exists to avoid, so a rowCount>1 grid without a verticalLine is
-// now always flagged UNRESOLVED for manual review against the real diagram instead
-// of auto-partitioned.
+// <verticalLine/> never actually appears in any real network seen so far (confirmed
+// by grepping every clipboard XML this toolkit has parsed) -- DIADesigner's real
+// separator for a parallel-branch (OR) grid is a trailing <marco type="normal"
+// columnCount="N" rowCount="M" .../> summarizing the grid shape, with the branches
+// themselves a flat, undifferentiated element sequence. rowCount is NOT a reliable
+// signal of branch count or even of whether branching exists at all -- confirmed
+// live and by direct visual inspection of the Ladder canvas on THREE separate
+// networks with rowCount=="1": two (mycie_st1's "ALARM_OGOLNY / alARM_st1-rising /
+// NOT emergency" -> praCA_ST1 reset, and STATYSTYKI's 6-station coin-edge OR into
+// one INC) are genuine parallel branches (each contact independently bridges the
+// same left rail to the same right bus -- textbook ladder OR), and a third
+// (mycie_st1's "PRACA_ST1 OR alarm-rising-edge" guard feeding 8 coils) was
+// PREVIOUSLY treated as AND based on domain-reasoning alone and shipped that way to
+// the live mycie_st1ST -- a real bug, only caught by going back and looking at the
+// actual diagram. The one thing that reliably distinguishes a branching grid from a
+// plain AND-series is the *presence* of this marco at all: a true AND-series (e.g.
+// "przycisk1_stop_stacja1 AND (ilosc_impulsow_st1 > 0)") carries no
+// marco[type=normal] in its rootLink whatsoever. So: whenever this marco is present
+// and its columnCount matches gridColumnCount of the top-level contact/compare
+// terms immediately preceding *the marco's own position* in the sequence, those
+// terms are ORed together. Terms before that window are a shared AND-prefix
+// (common gate ANDed in front of the branches); terms *after* the marco are a
+// shared AND-suffix (confirmed on a real network: mycie_st1's credit-increment
+// rung has 3 OR'd payment-trigger contacts, THEN the grid marco, THEN a 4th
+// "zezwolenie_pracy_stanowisko1" contact that ANDs onto the OR result). If the
+// count doesn't match, this is an unrecognized shape -- flagged UNRESOLVED rather
+// than guessed.
 function parseCondition(elems, start, stopNames) {
+  // Pre-scan: count contacts immediately followed by a compare-tuple (no marco[fb]
+  // between them, i.e. genuinely adjacent). Happening more than once means a
+  // repeating per-branch pattern -- confirmed on promocje/PROMOCJA_ZAL: each of the
+  // 7 day branches is its own "<day contact> AND (SR397 = n)" pair, and the compare
+  // must merge into its own contact's boundary or the pairs get split apart.
+  // Happening at most once means that single adjacency is coincidental -- a shared
+  // prefix contact that merely happens to sit right before the first of several
+  // otherwise-independent compare-only branches (confirmed on alarmy's
+  // "NOT Lizcznik" prefix before 6 independent "godziny_pracy_stN > 350" branches)
+  // -- and compares should each get their own boundary instead.
+  let adjacentPairCount = 0;
+  for (let j = start; j < elems.length; j++) {
+    if (elems[j].name === 'contact' && elems[j + 1] && elems[j + 1].name === 'inVariablesMarco' &&
+        elems[j + 2] && elems[j + 2].name === 'block' && COMPARE_OPS.has(elems[j + 2].attrs.typeName)) {
+      adjacentPairCount++;
+    }
+  }
+  const mergeCompareIntoContact = adjacentPairCount >= 2;
+
   const rows = [];
   let group = [];
+  const branchBoundaries = []; // group.length at each contact/compare push -- candidate OR-branch starts
   let gridColumnCount = null;
-  let gridRowCount = null;
+  let boundaryCountAtMarco = null; // branchBoundaries.length at the moment the grid marco was seen
   let i = start;
   for (; i < elems.length; i++) {
     const e = elems[i];
     if (stopNames.has(e.name)) break;
     if (e.name === 'verticalLine') { rows.push(group); group = []; continue; }
     if (e.name === 'marco') {
-      if (e.attrs.type === 'normal' && e.attrs.columnCount) {
+      if (e.attrs.type === 'normal' && e.attrs.columnCount && gridColumnCount === null) {
         gridColumnCount = parseInt(e.attrs.columnCount, 10);
-        gridRowCount = parseInt(e.attrs.rowCount, 10);
+        boundaryCountAtMarco = branchBoundaries.length;
       }
       continue; // visual/layout only, otherwise
     }
     if (e.name === 'emptyObject' || e.name === 'regionLogicCommand' || e.name === 'label') { continue; } // visual/layout only
-    if (e.name === 'contact') { group.push(contactTerm(e)); continue; }
+    if (e.name === 'contact') { branchBoundaries.push(group.length); group.push(contactTerm(e)); continue; }
     if (e.name === 'inVariablesMarco') {
       // consume inVariablesMarco, block, outVariablesMarco as one compare/compute term
       const inMacro = e;
@@ -152,6 +184,10 @@ function parseCondition(elems, start, stopNames) {
         const op = block.attrs.typeName;
         const ins = children(inMacro, 'inVariable').map((iv) => textOf(child(iv, 'expression')).trim());
         if (COMPARE_OPS.has(op) && ins.length === 2) {
+          const precededByContact = elems[i - 1] && elems[i - 1].name === 'contact';
+          if (!(mergeCompareIntoContact && precededByContact)) {
+            branchBoundaries.push(group.length);
+          }
           group.push(`(${ins[0]} ${op} ${ins[1]})`);
           i += 2; // skip block + outVariablesMarco (outVariablesMarco is empty/irrelevant for a compare)
           continue;
@@ -166,18 +202,43 @@ function parseCondition(elems, start, stopNames) {
     group.push(`/* UNRESOLVED COND ELEMENT <${e.name}> */`);
   }
   rows.push(group);
-  // No <verticalLine/> ever split this into rows (rows.length === 1). If the trailing
-  // grid marco says rowCount>1, this flat sequence actually hides real parallel
-  // branches we can't safely reconstruct -- flag it rather than guess (see comment
-  // above parseCondition). rowCount==1 is a plain AND-series; leave it as-is.
-  if (rows.length === 1 && gridRowCount && gridRowCount > 1) {
-    rows[0] = [`/* UNRESOLVED GRID: columnCount=${gridColumnCount} rowCount=${gridRowCount} with no <verticalLine/> -- AND/OR structure not auto-derivable, verify against the source Ladder diagram: ${rows[0].join(' | ')} */`];
+  // No <verticalLine/> ever split this into rows (rows.length === 1), but a grid
+  // marco appeared at some point, meaning gridColumnCount of the boundaries
+  // immediately preceding *that marco's position* are the real OR-branches --
+  // not necessarily the first or last N boundaries. Terms before that window are a
+  // shared AND-prefix (e.g. an overall gate ANDed in front of the branches, as in
+  // promocje's "promocja_w_godz AND (7 day-branches)"); terms *after* the window
+  // are a shared AND-suffix (confirmed on a real network: mycie_st1's credit
+  // increment has 3 OR'd payment-trigger contacts, THEN the grid marco, THEN a
+  // 4th "zezwolenie_pracy_stanowisko1" contact -- the marco sits between the
+  // branches and the suffix, not after everything).
+  let sharedPrefixTerms = [];
+  let sharedSuffixTerms = [];
+  if (rows.length === 1 && gridColumnCount && gridColumnCount > 1 && boundaryCountAtMarco !== null) {
+    const flat = rows[0];
+    const prefixCount = boundaryCountAtMarco - gridColumnCount;
+    if (prefixCount >= 0) {
+      const gridBoundaries = branchBoundaries.slice(prefixCount, boundaryCountAtMarco);
+      const suffixBoundaries = branchBoundaries.slice(boundaryCountAtMarco);
+      sharedPrefixTerms = flat.slice(0, gridBoundaries[0]);
+      sharedSuffixTerms = suffixBoundaries.length ? flat.slice(suffixBoundaries[0]) : [];
+      const regrouped = gridBoundaries.map((startIdx, bi) => {
+        const endIdx = bi + 1 < gridBoundaries.length ? gridBoundaries[bi + 1] : (suffixBoundaries[0] ?? flat.length);
+        return flat.slice(startIdx, endIdx);
+      });
+      rows.length = 0;
+      rows.push(...regrouped);
+    } else {
+      rows[0] = [`/* UNRESOLVED GRID: columnCount=${gridColumnCount} but found ${boundaryCountAtMarco} contact/compare-boundaries before the marco -- terms may be mis-grouped: ${rows[0].join(' | ')} */`];
+    }
   }
   const rowExprs = rows.map((g) => g.join(' AND ')).filter((s) => s.length > 0);
-  let expr;
-  if (rowExprs.length === 0) expr = null;
-  else if (rowExprs.length === 1) expr = rowExprs[0];
-  else expr = '(' + rowExprs.join(' OR ') + ')';
+  let orExpr;
+  if (rowExprs.length === 0) orExpr = null;
+  else if (rowExprs.length === 1) orExpr = rowExprs[0];
+  else orExpr = '(' + rowExprs.join(' OR ') + ')';
+  const allTerms = [...sharedPrefixTerms, orExpr, ...sharedSuffixTerms].filter((s) => s !== null && s.length > 0);
+  const expr = allTerms.length === 0 ? null : allTerms.join(' AND ');
   return { expr, next: i };
 }
 
@@ -270,11 +331,11 @@ function parseNetwork(net) {
   const statements = [];
   let i = 0;
   let legGuardExtra = []; // extra AND-terms accumulated since last leg boundary (guard contacts local to outLink)
-  let legRiskyGrid = null; // set if a rowCount>1 grid marco appears in this leg -- see parseCondition's comment
+  let legRiskyGrid = null; // set if a columnCount>1 grid marco appears in this leg -- see parseCondition's comment
   while (i < outElems.length) {
     const e = outElems[i];
     if (e.name === 'marco') {
-      if (e.attrs.type === 'normal' && e.attrs.rowCount && parseInt(e.attrs.rowCount, 10) > 1) {
+      if (e.attrs.type === 'normal' && e.attrs.columnCount && parseInt(e.attrs.columnCount, 10) > 1) {
         legRiskyGrid = `columnCount=${e.attrs.columnCount} rowCount=${e.attrs.rowCount}`;
       }
       i++;
@@ -333,14 +394,17 @@ function parseNetwork(net) {
 }
 
 function computeExpr(op, ins) {
-  // F+/F-/F*/F// are Delta's float-typed arithmetic mnemonics; ST's arithmetic
-  // operators are polymorphic over numeric types (including REAL), so they map to
-  // the same plain operators as the integer forms -- and must, since "F-" etc. isn't
-  // a legal ST identifier and would break parsing if emitted as a function call.
-  if (op === '+' || op === 'F+') return ins.join(' + ');
-  if (op === '-' || op === 'F-') return ins.join(' - ');
-  if (op === '*' || op === 'MUL16' || op === 'MUL' || op === 'F*') return ins.join(' * ');
-  if (op === '/' || op === 'DIV16' || op === 'DIV' || op === 'F/') return ins.join(' / ');
+  // F+/F-/F*/F// (float) and D+/D-/D*/D// (double-word/32-bit) are Delta's
+  // type-prefixed arithmetic mnemonics; ST's arithmetic operators are polymorphic
+  // over numeric types (REAL and DINT included), so they all map to the same plain
+  // operators as the base integer forms -- and must, since e.g. "D+" isn't a legal
+  // ST identifier (breaks parsing exactly like "F-": tokenizes as identifier "D"
+  // then operator "+", confirmed live -- DIADesigner prompted to declare a bare "D"
+  // variable and cascaded into dozens of further errors).
+  if (op === '+' || op === 'F+' || op === 'D+') return ins.join(' + ');
+  if (op === '-' || op === 'F-' || op === 'D-') return ins.join(' - ');
+  if (op === '*' || op === 'MUL16' || op === 'MUL' || op === 'F*' || op === 'D*') return ins.join(' * ');
+  if (op === '/' || op === 'DIV16' || op === 'DIV' || op === 'F/' || op === 'D/') return ins.join(' / ');
   if (op === 'MOV' || op === 'DMOV') return ins[0];
   return null;
 }
@@ -356,6 +420,14 @@ function statementToSt(s) {
     const expr = computeExpr(s.op, s.ins);
     if (target && expr !== null) {
       const assign = `${target} := ${expr};`;
+      return s.guard ? `IF ${s.guard} THEN ${assign} END_IF;` : assign;
+    }
+    // INC/DINC (increment-in-place: one register, no separate output pin) are also
+    // undeclared identifiers in this compiler (confirmed live, same as FLT/INT/D+),
+    // but the semantics are unambiguous plain ST -- no vendor-specific risk, so
+    // unlike the fallback below this needs no VERIFY marker.
+    if ((s.op === 'INC' || s.op === 'DINC') && s.ins.length === 1 && s.outs.length === 0) {
+      const assign = `${s.ins[0]} := ${s.ins[0]} + 1;`;
       return s.guard ? `IF ${s.guard} THEN ${assign} END_IF;` : assign;
     }
     // Unmapped Delta API instruction (timers, counters, type conversions, custom FB
