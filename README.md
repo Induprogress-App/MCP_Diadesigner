@@ -1,151 +1,180 @@
+# Delta DIADesigner 1.14 MCP Server
 
-# @codesys/mcp-toolkit
+A Model Context Protocol (MCP) server for **Delta DIADesigner 1.14**. It lets
+an MCP client (Claude Desktop, Claude Code, …) read and edit DIADesigner
+program content, inspect native project containers, and drive the ISP
+compiler — without a scripting engine, since DIADesigner ships none.
 
-![npm](https://img.shields.io/npm/v/@codesys/mcp-toolkit)
-![License](https://img.shields.io/github/license/johannesPettersson80/codesys-mcp-toolkit)
-![Node Version](https://img.shields.io/node/v/@codesys/mcp-toolkit)
+DIADesigner is not a CODESYS profile, so this server automates it through
+three layers instead:
 
-A Model Context Protocol (MCP) server for CODESYS V3 programming environments. This toolkit enables seamless interaction between MCP clients (like Claude Desktop) and CODESYS, allowing automation of project management, POU creation, code editing, and compilation tasks via the CODESYS Scripting Engine.
+| Layer | How | What it gives you |
+| --- | --- | --- |
+| Installation / workspace | filesystem + install layout | detection, project discovery, backups, device catalogs |
+| Native project | Delta's own .NET assemblies via `bridge/DeltaBridge.ps1` | decrypt `.diade`, parse `PLC.prog` headers, load and compile programs |
+| Program content | PLCopen `.EXPORT` XML | read, edit, create POUs, declare variables, export, import |
 
-This repository also includes a separate MCP server for **Delta DIADesigner 1.14** (`diadesigner-mcp-tool`). DIADesigner is not a CODESYS profile and ships no scripting engine, so that server works through three layers instead: the installation layout, Delta's own .NET assemblies driven from PowerShell, and PLCopen `.EXPORT` XML.
+## Requirements
 
-It can read and edit program content (POUs, Structured Text, variable declarations, structures), export and import objects between files, decrypt native `.diade` project containers, and run DIADesigner's ISP compiler. See **[docs/diadesigner14.md](docs/diadesigner14.md)**.
+- Windows (the bridge drives Delta's x86 assemblies through
+  `C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe`)
+- Node.js 18+
+- DIADesigner 1.14 installed, for anything beyond pure `.EXPORT` editing
 
-The older `diadesigner13-mcp-tool` entry point is still shipped from `dist/` for reference, but 1.14 users should use `diadesigner-mcp-tool`.
-
-## 🌟 Features
-
-- **Project Management**
-  - Open existing CODESYS projects (`open_project`)
-  - Create new projects from standard templates (`create_project`)
-  - Save project changes (`save_project`)
-
-- **POU Management**
-  - Create Programs, Function Blocks, and Functions (`create_pou`)
-  - Set declaration and implementation code (`set_pou_code`)
-  - Create properties for Function Blocks (`create_property`)
-  - Create methods for Function Blocks (`create_method`)
-  - Compile projects (`compile_project`)
-
-- **MCP Resources**
-  - `codesys://project/status`: Check scripting status and currently open project state.
-  - `codesys://project/{+project_path}/structure`: Retrieve the object structure of a specified project.
-  - `codesys://project/{+project_path}/pou/{+pou_path}/code`: Read the declaration and implementation code for a specified POU, Method, or Property accessor.
-
-## 📋 Prerequisites
-
-- **CODESYS V3**: A working CODESYS V3 installation (tested with 3.5 SP21) with the **Scripting Engine** component enabled during installation.
-- **Node.js**: Version 18.0.0 or later is recommended.
-- **MCP Client**: An MCP-enabled application (e.g., Claude Desktop).
-
-*(Note: CODESYS uses Python 2.7 internally for its scripting engine, but this toolkit handles the interaction; you do not need to manage Python separately.)*
-
-## 🚀 Installation
-
-The recommended way to install is globally using npm:
+## Installation
 
 ```bash
-npm install -g @codesys/mcp-toolkit
+git clone https://github.com/Induprogress/MCP_Diadesigner.git
+cd MCP_Diadesigner
+npm install
 ```
 
-This installs the package globally, making the `codesys-mcp-tool` command available in your system's terminal PATH.
+A prebuilt `dist14/` is committed, so you can point an MCP client at it right
+away. If you change the TypeScript sources, rebuild with:
 
-*(Advanced users can also install from source for development - see CONTRIBUTING.md if available).*
+```bash
+npm run build
+```
 
-## 🔧 Configuration (IMPORTANT!)
+## Configuration
 
-This toolkit needs to know where your CODESYS installation is and which profile to use. Configuration is typically done within your MCP Client application (like Claude Desktop).
-
-### Recommended Configuration Method (Direct Command)
-
-Due to potential environment variable issues (especially with `PATH`) when launching Node.js tools via wrappers like `npx` within certain host applications (e.g., Claude Desktop), it is **strongly recommended** to configure your MCP client to run the installed command `codesys-mcp-tool` **directly**.
-
-**Example for Claude Desktop (`settings.json` -> `mcpServers`):**
+Point your MCP client at `dist14/bin.js` directly (see
+[examples/diadesigner14_config.json](examples/diadesigner14_config.json)):
 
 ```json
 {
   "mcpServers": {
-    // ... other servers ...
-    "codesys_local": {
-      "command": "codesys-mcp-tool", // <<< Use the direct command name
+    "diadesigner": {
+      "command": "node",
       "args": [
-        // Pass arguments directly to the tool using flags
-        "--codesys-path", "C:\\Program Files\\Path\\To\\Your\\CODESYS\\Common\\CODESYS.exe",
-        "--codesys-profile", "Your CODESYS Profile Name"
-        // Optional: Add --workspace "/path/to/your/projects" if needed
-      ]
-    }
-    // ... other servers ...
-  }
-}
-```
-
-**Key Steps:**
-1.  Replace `"C:\\Program Files\\Path\\To\\Your\\CODESYS\\Common\\CODESYS.exe"` with the **full, correct path** to your specific `CODESYS.exe` file.
-2.  Replace `"Your CODESYS Profile Name"` with the **exact name** of the CODESYS profile you want to use (visible in the CODESYS UI).
-3.  Ensure the `codesys-mcp-tool` command is accessible in the system PATH where the MCP Client application runs. Global installation via `npm install -g` usually handles this.
-4.  Restart your MCP Client application (e.g., Claude Desktop) to apply the settings changes.
-
-### Alternative Configuration (Using `npx` - Not Recommended)
-
-Launching with `npx` has been observed to cause immediate errors (`'C:\Program' is not recognized...`) in some environments, likely due to how `npx` handles the execution environment. **Use the Direct Command method above if possible.** If you must use `npx`:
-
-```json
-// Example using npx (POTENTIALLY PROBLEMATIC - USE WITH CAUTION):
-{
-  "mcpServers": {
-    "codesys_local": {
-      "command": "npx",
-      "args": [
-        "-y", // Tells npx to install temporarily if not found globally
-        "@codesys/mcp-toolkit",
-        // Arguments for the tool MUST come AFTER the package name
-        "--codesys-path", "C:\\Program Files\\Path\\To\\Your\\CODESYS\\Common\\CODESYS.exe",
-        "--codesys-profile", "Your CODESYS Profile Name"
+        "C:\\Path\\To\\MCP_Diadesigner\\dist14\\bin.js",
+        "--diadesigner-path",
+        "C:\\Program Files (x86)\\Delta Industrial Automation\\DIAStudio\\DIADesigner 1.14\\DIADesigner.exe",
+        "--workspace",
+        "D:\\YourProjectRoot"
       ]
     }
   }
 }
 ```
-*(Note: The `--` separator after the package name might sometimes help `npx` but is not guaranteed to fix the environment issue.)*
 
-## 🛠️ Command-Line Arguments
+Restart your MCP client to apply the change.
 
-When running `codesys-mcp-tool` directly or configuring it, you can use these arguments:
+### Command-line arguments
 
-*   `-p, --codesys-path <path>`: Full path to `CODESYS.exe`. (Required, overrides `CODESYS_PATH` env var, has a default but relying on it is not recommended).
-*   `-f, --codesys-profile <profile>`: Name of the CODESYS profile. (Required, overrides `CODESYS_PROFILE` env var, has a default but relying on it is not recommended).
-*   `-w, --workspace <dir>`: Workspace directory for resolving relative project paths passed to tools. Defaults to the directory where the command was launched (which might be unpredictable when run by another application). Setting this explicitly might be needed if using relative paths.
-*   `-h, --help`: Show help message.
-*   `--version`: Show package version.
+- `-d, --diadesigner-path <path>` — path to `DIADesigner.exe`. Optional: the
+  server scans `…\DIAStudio\DIADesigner <major>.<minor>` under both Program
+  Files trees and picks the newest install if omitted.
+- `-z, --sevenzip-path <path>` — path to the bundled `7za.exe` helper.
+  Defaults to `7zTool\7za.exe` next to the executable.
+- `-w, --workspace <dir>` — workspace directory for resolving relative paths
+  passed to tools. Defaults to the current working directory.
 
-## 🔍 Troubleshooting
+## Working model
 
-*   **`'C:\Program' is not recognized...` error immediately after connection:**
-    *   **Cause:** This typically happens when the tool is launched via `npx` within an environment like Claude Desktop. The execution environment (`PATH` variable) provided to the process likely causes an internal CODESYS command (like running Python) to fail.
-    *   **Solution:** Configure your MCP Client to run the command **directly** (`"command": "codesys-mcp-tool"`) instead of using `"command": "npx"`. See the **Recommended Configuration Method** section above.
+DIADesigner keeps program logic inside encrypted containers, so the server
+does not edit `PLC.prog` in place. The supported loop is:
 
-*   **Tool Fails / Errors in Output:**
-    *   Check the logs from your MCP Client application (e.g., Claude Desktop logs). Look for `INTEROP:` messages or Python `DEBUG:` / `ERROR:` messages printed to stderr from the CODESYS script execution.
-    *   Ensure the `--codesys-path` and `--codesys-profile` arguments passed to the command are correct and point to a valid CODESYS installation with scripting enabled.
-    *   Verify the project paths and object paths you are passing to tools are correct (use forward slashes `/`).
-    *   Make sure no other CODESYS instances are running in conflicting ways (e.g., holding a lock on the profile).
+1. In DIADesigner, export the POUs you want to work on to a `.EXPORT` file.
+2. Read and edit that file with the tools below.
+3. Import the file back in DIADesigner and let it compile and validate.
 
-*   **`command not found: codesys-mcp-tool`:**
-    *   Ensure the package was installed globally (`npm install -g @codesys/mcp-toolkit`).
-    *   Ensure the npm global bin directory is in your system's `PATH` environment variable. Find it with `npm config get prefix` and add the `bin` subdirectory (or the main directory itself on Windows) to your PATH.
+`compile_program` shortens step 3 when you already have a program container,
+but DIADesigner remains the authority on whether code is valid.
 
-*   **Check Logs:**
-    *   Claude Desktop logs: `C:\Users\<YourUsername>\AppData\Roaming\Claude\logs\` (Windows)
+## Tools
 
-## 🤝 Contributing
-Contributions, issues, and feature requests are welcome! Feel free to check the issues page. (Optionally add a CONTRIBUTING.md file with more details).
+### Installation and workspace
 
-## 📝 License
-This project is licensed under the MIT License - see the LICENSE file for details.
+- `detect_installation` — executable, version, helper tools, and whether the
+  assemblies the bridge needs are present
+- `check_bridge` — confirms the .NET bridge loads Delta's assemblies (run
+  this first when native tools misbehave)
+- `scan_workspace_projects`, `inspect_file`, `resolve_path`
+- `list_archive_entries`, `extract_archive`, `create_backup`
+- `list_device_catalog`, `open_in_diadesigner`
 
-## 🙏 Acknowledgements
-- The CODESYS GmbH team for the powerful CODESYS platform and its scripting engine.
-- The Model Context Protocol project for defining the interaction standard.
-- All contributors and users who help improve this toolkit.
+### Native project
 
+- `read_native_project` — decrypts a `.diade` container and returns the
+  solution and device tree
+- `read_program_header` — `PLC.prog` / `PLC.diaobj` header fields
+- `read_program` — loads a container through DIADesigner's own loader and
+  lists its POUs and data types
+- `compile_program` — runs the ISP compiler (`mode: "check"` validates only)
+- `read_program_memory` — reads the decrypted program straight out of a
+  *running* DIADesigner process's memory (ClrMD, read-only); the project must
+  be open in DIADesigner first
+- `convert_ld_to_st` — reconstructs Structured Text from the Ladder networks
+  read via `read_program_memory`, optionally isolated to one POU/station with
+  a coil-name regex
+
+### Program content (PLCopen `.EXPORT`)
+
+- Read: `list_pous`, `get_pou`, `list_variables`, `list_global_variables`,
+  `list_structures`
+- Create: `create_empty_export`, `create_pou`, `create_structure`
+- Edit: `set_pou_code`, `set_pou_body_xml`, `declare_variables`, `delete_pou`
+- Move: `export_objects`, `import_objects`
+
+### Symbols (DiaTag)
+
+- `list_symbol_structures`, `list_symbol_global_nodes`, `find_free_d_range`
+- `create_symbol_structure`, `create_symbol_global_node`
+
+D-register ranges are computed from the type sizes declared in the symbol
+file, so `find_free_d_range` reflects real occupancy rather than an assumed
+layout.
+
+## Types accepted in declarations
+
+Elementary IEC types (`BOOL`, `INT`, `DINT`, `REAL`, `LREAL`, `TIME`, …),
+`STRING(n)` / `WSTRING(n)`, `ARRAY[lo..hi] OF <type>`, and any user-defined
+type name (emitted as `<derived name="…"/>`).
+
+`declare_variables` appends to an existing variable group when the POU
+already has one of that kind, so the file keeps whatever layout DIADesigner
+wrote. Redeclaring an existing name requires `replaceExisting: true`.
+
+## Project format: 1.13 versus 1.14
+
+The `.diade` container changed between versions:
+
+| Version | Container | `read_native_project` |
+| --- | --- | --- |
+| 1.13 | raw binary AES | fails — the 1.14 reader expects Base64 |
+| 1.14 | Base64-armoured AES | works |
+
+`inspect_file` reports which container a `.diade` uses. To bring a 1.13
+project forward, open it in DIADesigner 1.14 (launcher → **Project
+Migrate**) and save it; afterwards the native tools accept it.
+
+## Editing bodies other than ST
+
+`set_pou_code` generates a Structured Text body:
+
+```xml
+<body>
+  <ST>
+    <xhtml xmlns="http://www.w3.org/1999/xhtml"><![CDATA[...]]></xhtml>
+  </ST>
+</body>
+```
+
+For LD, FBD, SFC or CFC, pass a complete known-good element to
+`set_pou_body_xml` instead. Edits are byte-range splices, so anything the
+tools do not understand elsewhere in the document survives untouched.
+
+## Safety
+
+Every write creates a timestamped `.bak-<timestamp>` copy next to the file
+unless you pass `backup: false`.
+
+## Documentation
+
+See [docs/diadesigner14.md](docs/diadesigner14.md) for the full reference,
+including verified behaviour and known gaps.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
