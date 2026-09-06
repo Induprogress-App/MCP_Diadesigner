@@ -80,6 +80,15 @@ function children(node, name) {
 }
 
 const COMPARE_OPS = new Set(['=', '<>', '>', '<', '>=', '<=']);
+// Delta's D-prefixed compare mnemonics (D=, D<>, D>, D<, D>=, D<=) are the
+// double-word-operand form of the same comparison -- ST's relational operators
+// are polymorphic over numeric width, so "D<>" maps to the same "<>" used for
+// the word form (confirmed live: a raw "D<>" op in generated ST is rejected as
+// an undeclared identifier "D" followed by a stray "<>", the same failure mode
+// documented above for D+/D-/D*/D/).
+function normalizeCompareOp(op) {
+  return op && op[0] === 'D' && COMPARE_OPS.has(op.slice(1)) ? op.slice(1) : op;
+}
 
 // Signals that need an EDGE_<name> shadow bit, collected across the whole
 // document so one `EDGE_X := X;` update per distinct signal is emitted once,
@@ -181,7 +190,7 @@ function parseCondition(elems, start, stopNames) {
       const block = elems[i + 1] && elems[i + 1].name === 'block' ? elems[i + 1] : null;
       const outMacro = elems[i + 2] && elems[i + 2].name === 'outVariablesMarco' ? elems[i + 2] : null;
       if (block) {
-        const op = block.attrs.typeName;
+        const op = normalizeCompareOp(block.attrs.typeName);
         const ins = children(inMacro, 'inVariable').map((iv) => textOf(child(iv, 'expression')).trim());
         if (COMPARE_OPS.has(op) && ins.length === 2) {
           const precededByContact = elems[i - 1] && elems[i - 1].name === 'contact';
@@ -270,7 +279,7 @@ function splitSharedRootIntoLegs(rootElems, legCount) {
     if (e.name === 'inVariablesMarco') {
       const block = rootElems[i + 1] && rootElems[i + 1].name === 'block' ? rootElems[i + 1] : null;
       if (block) {
-        const op = block.attrs.typeName;
+        const op = normalizeCompareOp(block.attrs.typeName);
         const ins = children(e, 'inVariable').map((iv) => textOf(child(iv, 'expression')).trim());
         if (COMPARE_OPS.has(op) && ins.length === 2) {
           boundaries.push(flat.length);
@@ -367,9 +376,14 @@ function parseNetwork(net) {
       const block = outElems[i + 1] && outElems[i + 1].name === 'block' ? outElems[i + 1] : null;
       const outMacro = outElems[i + 2] && outElems[i + 2].name === 'outVariablesMarco' ? outElems[i + 2] : null;
       if (block) {
-        const op = block.attrs.typeName;
-        const ins = children(inMacro, 'inVariable').map((iv) => textOf(child(iv, 'expression')).trim());
-        const outs = outMacro ? children(outMacro, 'outVariable').map((ov) => textOf(child(ov, 'expression')).trim()) : [];
+        const op = normalizeCompareOp(block.attrs.typeName);
+        // "???" is DIADesigner's own placeholder for an unwired pin on a multi-arg FB
+        // (confirmed live in a FROM block: module/start/count wired, the 4th input and
+        // 2nd output left unconnected both export literally as "???") -- passing that
+        // through as an argument produces invalid ST syntax, so unconnected pins are
+        // dropped rather than emitted.
+        const ins = children(inMacro, 'inVariable').map((iv) => textOf(child(iv, 'expression')).trim()).filter((v) => v !== '???');
+        const outs = (outMacro ? children(outMacro, 'outVariable').map((ov) => textOf(child(ov, 'expression')).trim()) : []).filter((v) => v !== '???');
         // A compare block with no output acts as a contact (a boolean gate for what
         // follows in this leg), same as in rootLink -- not a value-producing statement.
         if (COMPARE_OPS.has(op) && ins.length === 2 && outs.length === 0) {
