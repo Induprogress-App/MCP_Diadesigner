@@ -458,11 +458,14 @@ function statementToSt(s) {
     // (1) bare "INT(...)" is a hard syntax error -- INT is the IEC-reserved type
     // keyword, not an identifier; (2) the IEC-standard names INT_TO_REAL/REAL_TO_INT
     // aren't recognized either -- DIADesigner treated them as undeclared
-    // identifiers and prompted to declare them as POU variables, meaning this
-    // compiler has no such built-in function under either name. A plain `:=`
-    // between INT and REAL variables relies on this ST compiler doing implicit
-    // numeric conversion on assignment, which is common in less strictly
-    // IEC-conformant industrial ST dialects -- unverified, hence still flagged.
+    // identifiers and prompted to declare them as POU variables; (3) Delta's own
+    // documented short-form names TO_REAL/TO_INT were ALSO undeclared identifiers
+    // on this exact model (confirmed live: 30 type-mismatch errors on plain
+    // assignment turned into 60 undefined-identifier errors with TO_REAL/TO_INT --
+    // strictly worse, reverted). So despite the plain `:=` failing with "Operands'
+    // data type don't match" (0500.0175), it remains the least-wrong -- and only
+    // tested -- form; this compiler's real conversion syntax for this model is
+    // still unconfirmed and needs vendor documentation specific to DVP20SX3.
     let call;
     if (s.op === 'FLT' || s.op === 'INT') {
       call = s.outs.length === 1 ? `${s.outs[0]} := ${s.ins[0]};` : `${s.ins[0]};`;
