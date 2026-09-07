@@ -425,8 +425,8 @@ function computeExpr(op, ins) {
 
 function statementToSt(s) {
   if (s.kind === 'coil') {
-    if (s.storage === 'set') return s.guard === 'TRUE' ? `${s.varName} := TRUE;` : `IF ${s.guard} THEN ${s.varName} := TRUE; END_IF;`;
-    if (s.storage === 'reset') return s.guard === 'TRUE' ? `${s.varName} := FALSE;` : `IF ${s.guard} THEN ${s.varName} := FALSE; END_IF;`;
+    if (s.storage === 'set') return s.guard === 'TRUE' ? `${s.varName} := TRUE;` : `IF ${s.guard} THEN\n    ${s.varName} := TRUE;\nEND_IF;`;
+    if (s.storage === 'reset') return s.guard === 'TRUE' ? `${s.varName} := FALSE;` : `IF ${s.guard} THEN\n    ${s.varName} := FALSE;\nEND_IF;`;
     return `${s.varName} := ${s.guard};`;
   }
   if (s.kind === 'compute') {
@@ -434,7 +434,7 @@ function statementToSt(s) {
     const expr = computeExpr(s.op, s.ins);
     if (target && expr !== null) {
       const assign = `${target} := ${expr};`;
-      return s.guard ? `IF ${s.guard} THEN ${assign} END_IF;` : assign;
+      return s.guard ? `IF ${s.guard} THEN\n    ${assign}\nEND_IF;` : assign;
     }
     // INC/DINC (increment-in-place: one register, no separate output pin) are also
     // undeclared identifiers in this compiler (confirmed live, same as FLT/INT/D+),
@@ -442,7 +442,7 @@ function statementToSt(s) {
     // unlike the fallback below this needs no VERIFY marker.
     if ((s.op === 'INC' || s.op === 'DINC') && s.ins.length === 1 && s.outs.length === 0) {
       const assign = `${s.ins[0]} := ${s.ins[0]} + 1;`;
-      return s.guard ? `IF ${s.guard} THEN ${assign} END_IF;` : assign;
+      return s.guard ? `IF ${s.guard} THEN\n    ${assign}\nEND_IF;` : assign;
     }
     // Unmapped Delta API instruction (timers, counters, type conversions, custom FB
     // instances, ...). If it has exactly one output, treat it as a function -- e.g.
@@ -474,7 +474,7 @@ function statementToSt(s) {
     } else {
       call = `${s.op}(${s.ins.join(', ')});`;
     }
-    const body = s.guard ? `IF ${s.guard} THEN ${call} END_IF;` : call;
+    const body = s.guard ? `IF ${s.guard} THEN\n    ${call}\nEND_IF;` : call;
     return `${body} (* VERIFY: Delta API instruction "${s.op}", outs=[${s.outs.join(', ')}] -- confirm ST call syntax *)`;
   }
   return `(* UNRESOLVED STATEMENT: ${s.desc} *)`;
@@ -495,7 +495,7 @@ for (const net of networks) {
   for (const s of statements) {
     const line = statementToSt(s);
     if (line.includes('UNRESOLVED')) unresolvedCount++;
-    console.log('    ' + line);
+    for (const physicalLine of line.split('\n')) console.log('    ' + physicalLine);
   }
 }
 if (edgeVars.size > 0) {
