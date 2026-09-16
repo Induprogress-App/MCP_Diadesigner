@@ -466,6 +466,16 @@ function statementToSt(s) {
     // data type don't match" (0500.0175), it remains the least-wrong -- and only
     // tested -- form; this compiler's real conversion syntax for this model is
     // still unconfirmed and needs vendor documentation specific to DVP20SX3.
+    // A block wired with zero inputs AND zero outputs is not a real call -- it's an
+    // unresolved/placeholder instruction left dangling in the Ladder diagram itself
+    // (confirmed live for BOUT in WYJSCIA's clipboard XML: api="-1", empty
+    // inVariablesMarco/outVariablesMarco -- Delta's own sentinel for "never
+    // configured"). It already does nothing in the original Ladder, so dropping it
+    // here changes no PLC behavior; emitting `BOUT();` would just be a guaranteed
+    // compile error for code that was already dead.
+    if (s.ins.length === 0 && s.outs.length === 0) {
+      return `(* dropped: unresolved/placeholder "${s.op}" instruction with no wired operands -- already a no-op in the original Ladder *)`;
+    }
     let call;
     if (s.op === 'FLT' || s.op === 'INT') {
       call = s.outs.length === 1 ? `${s.outs[0]} := ${s.ins[0]};` : `${s.ins[0]};`;

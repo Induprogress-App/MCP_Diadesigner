@@ -239,3 +239,97 @@ Not yet verified on this machine:
   genuinely unrecognized element (e.g. a timer or other library
   function-block instance) now comes through as an explicit
   `(* UNRESOLVED: ... *)` marker in the generated ST instead of vanishing.
+- **`export_project` (GUI-driven whole-project export) does not produce PLCopen
+  XML.** Despite the tool description, driving DIADesigner's own
+  `Programming` → right-click → **Export** with *many* POUs selected (either
+  the whole tree via Shift+click range-select, or an explicit multi-item
+  selection) writes a small, AES-encrypted file — `list_pous`/`get_pou` reject
+  it with `Not an XML document`. This reproduces even for a 2-object
+  selection, so it is not a size/count threshold; it looks like Export always
+  encrypts once more than one object is selected. A **single-object** Export
+  (right-click exactly one POU, e.g. just `FalownikiST`) reliably produces
+  plain, well-formed PLCopen XML that the toolkit's tools parse correctly —
+  confirmed on several POUs this session. Until multi-object export is
+  understood or fixed, the only proven way to get a POU's XML via this menu is
+  one Export per POU.
+- **`convert_ld_to_st` is not scoped to the open/active POU tab** — it walks
+  every `IspProject.NetWorkData` resident in the process regardless of which
+  POU is frontmost in the UI (same underlying source as `read_program_memory`;
+  see the per-POU extraction section above). Calling it with no `coilPattern`
+  after opening a single small POU (`RTC`) still returned 574 networks spread
+  across most of the project's LD POUs in one flat list, with no per-network
+  POU tag. Two consequences for anyone trying to use its output as a
+  "ground truth" reference per POU:
+  - When the **same coil name is written by more than one POU** (e.g.
+    `komunikat1_st1`, set independently by both `mycie_st1` — on a
+    credit/impulse condition — and `komunikaty_1` — on `D31` display-code
+    edges, a real and intentional dual-writer pattern, verified via
+    **Find and Replace → Look in: Current Project → Find All**, which reports
+    every `Network/Element (n, TYPE)` hit with its owning POU in the `Source`
+    column), a flat coil-name → statement map silently conflates the two.
+    Comparing an actual POU's ST against "the" ideal entry for that coil name
+    can flag a false mismatch that is actually a same-named rung belonging to
+    a *different* POU. **`Find All` with `Look in: Current Project` is the
+    reliable way to enumerate every POU that touches a given variable**,
+    something no MCP tool here currently exposes.
+  - Whole swaths of some POUs are **silently absent** from the flat dump even
+    though they compile with 0 errors and are clearly present in the LD
+    canvas — observed for `STATYSTYKI`, `SMS`, `wykresy`, `komunikacja`,
+    `alarmy`, `odkurzacze`, `osmoza`, `programy`, `WYKRES_ROCZNY` (all showed
+    dozens of target variables with no corresponding entry at all, versus
+    POUs like `RTC`, `promocje`, `mycie_st1`/`MYCIE_ST2..6`, `komunikaty_1..6`,
+    `licencja`, `pompy` which came through close to completely). Root cause
+    not isolated — plausibly instructions the reader doesn't recognize
+    causing it to drop the *whole* network rather than emit `UNRESOLVED` for
+    just the unrecognized piece, but not confirmed.
+  - A comment-stripping mismatch: `RegionLogicCommandData` (a grid/layout
+    element inside a network — the same thing `bridge/_parse_clip.js`'s
+    clipboard-XML parser already learned to skip as visual-only, see its
+    `regionLogicCommand` handling) comes through `convert_ld_to_st` as a
+    literal `(* UNRESOLVED: unhandled element type RegionLogicCommandData *)`
+    inside the emitted boolean expression, e.g.
+    `IF (2 = D31) AND (* UNRESOLVED: ... *) THEN ...`. Naively stripping `(*
+    ... *)` comments for a text/logic diff leaves a dangling `AND`/`OR` right
+    before `THEN` or `;`, which reads as a missing term when the real LD (and
+    the correctly-translated ST) never had one. `DiaMemoryReader.cs` should
+    most likely skip `RegionLogicCommandData` the same way `_parse_clip.js`
+    skips `regionLogicCommand`, rather than surfacing it as UNRESOLVED.
+- **Reliable way to read an ST POU's actual current source without exporting
+  anything**: open the POU's ST worksheet tab in the UI, click into the code
+  editor, `Ctrl+A` then `Ctrl+C`, then read the OS clipboard directly
+  (`Get-Clipboard` from PowerShell). Unlike a Ladder worksheet — where
+  `Ctrl+A`/`Ctrl+C` yields the clipboard "Network" XML format that
+  `bridge/_parse_clip.js` exists to decode — copying from an **ST** worksheet
+  puts the plain ST text on the clipboard verbatim, no parsing needed.
+  Verified byte-for-byte stable: a fresh capture of `MYCIE_ST4ST` this session
+  matched a capture of the same POU taken in an earlier session days prior.
+  This is the cheapest path to "what does this ST POU actually contain right
+  now" when `export_project`'s multi-object path is unusable (previous
+  bullet) and doing one single-object Export per POU is too slow.
+- **Auditing LD-vs-ST translation quality (this session's actual task)**: with
+  no tool able to produce a reliable per-POU "ideal" ST reference at scale
+  (both gaps above), the only trustworthy method found was fully manual:
+  open the LD POU's canvas directly, read each network, and compare it by
+  hand against the ST worksheet's actual text (captured per the clipboard
+  method above). A same-text-but-different-shape trap worth recording for
+  future comparisons: DVP's `SER`/`DSER` (find index of max/min over an
+  array) and `WSUM` (sum of n consecutive words) are frequently hand-unrolled
+  into an explicit ST comparison chain or `+` chain rather than called
+  directly — confirmed correct in `WYKRES_STANOWISKA`, `WYKRES_PROGRAMY`,
+  `WYKRES_ROCZNY` (`DSER` → sequential max-tracking `IF x > max THEN max :=
+  x`) and `odkurzacze` (`WSUM` → explicit `+`). These are legitimate,
+  semantically-equivalent rewrites, not translation bugs, and a naive
+  instruction-name-based comparison would flag every one of them as a
+  mismatch. Likewise `WSFL` (circular shift register) gets hand-unrolled into
+  one assignment per slot, highest-index first (to avoid clobbering a value
+  before it's copied) plus a final zero-and-reset of the source slot —
+  verified step-by-step against the LD's actual `WSFL(S, D, n1, n2)`
+  parameters in `WYKRES_ROCZNY` and found to match exactly.
+  Also worth noting for whoever automates this further: naive text/AST
+  equality is not enough even after fixing parenthesization — `AND`/`OR` are
+  associative and commutative in this domain (no side effects in these pure
+  boolean/arithmetic reads), so a real comparison needs a canonicalizing
+  boolean-expression parser (tokenize → parse with standard precedence → flatten
+  nested AND/OR into sorted operand lists → compare canonical forms) rather
+  than string matching, or every reordered/re-parenthesized-but-equivalent
+  rung reads as a false positive.
