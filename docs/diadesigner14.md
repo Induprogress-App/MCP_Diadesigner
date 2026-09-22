@@ -13,6 +13,12 @@ engine. This server automates it through three layers:
 | Native project | Delta's own .NET assemblies via `bridge/DeltaBridge.ps1` | decrypt `.diade`, parse `PLC.prog` headers, load and compile programs |
 | Program content | PLCopen `.EXPORT` XML | read, edit, create POUs, declare variables, export, import |
 
+> Rewriting an LD POU to ST by hand in the DIADesigner UI? See
+> [ld-to-st-workflow.md](ld-to-st-workflow.md) for the step-by-step recipe
+> and its pitfalls — several of the gaps documented below (whole-project
+> scoping, cross-POU name collisions, the mid-file BOM issue) are exactly
+> what that guide exists to steer you around.
+
 ## Configuration
 
 ```json

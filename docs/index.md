@@ -1,27 +1,23 @@
-# CODESYS MCP Toolkit Documentation
+# MCP Toolkit Documentation
 
-Welcome to the documentation for the CODESYS MCP Toolkit!
+This repo ships MCP servers for **Delta DIADesigner** (1.13 and 1.14) and for
+**CODESYS V3**. Each automates its target through the closest thing it has to
+a scripting interface, since neither IDE ships one on its own.
 
-## Overview
+## Delta DIADesigner
 
-The CODESYS MCP Toolkit provides a bridge between Model Context Protocol (MCP) clients and CODESYS V3 programming environments. This toolkit enables seamless interaction for automating project management, POU creation, code editing, and compilation tasks.
+- [Delta DIADesigner 1.14](diadesigner14.md) — the actively maintained
+  server: full tool reference, verified behaviour, known gaps
+- [LD → ST conversion workflow](ld-to-st-workflow.md) — step-by-step guide
+  and pitfalls for rewriting a Ladder POU to Structured Text
+- [Delta DIADesigner 1.13](diadesigner13.md)
 
-## Components
-
-- **MCP Server**: Core component that handles MCP protocol communication
-- **CODESYS Script Integration**: Interface with CODESYS scripting engine
-- **Command-Line Interface**: For direct usage and configuration
-
-## Getting Started
+## CODESYS V3
 
 - [Installation](installation.md)
 - [Configuration](configuration.md)
-- [Delta DIADesigner 1.13](diadesigner13.md)
-- [Usage Examples](examples.md)
-- [API Reference](api.md)
 
 ## Advanced Topics
 
 - [Contributing Guidelines](../CONTRIBUTING.md)
-- [Troubleshooting](troubleshooting.md)
-- [Custom Extensions](extensions.md)
+- [Changelog](../CHANGELOG.md)

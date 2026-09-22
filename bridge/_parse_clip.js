@@ -492,6 +492,11 @@ function statementToSt(s) {
 
 // ---- main ----
 const file = process.argv[2];
+if (!file) {
+  console.error('Usage: node _parse_clip.js <clipboard-network.xml>');
+  console.error('  (Ctrl+A / Ctrl+C in the LD worksheet, then Get-Clipboard -Raw | Set-Content <file>)');
+  process.exit(1);
+}
 const xml = stripXmlDecl(fs.readFileSync(file, 'utf-8'));
 const tree = buildTree(tokenize(xml));
 const ldRoot = child(tree, 'LD');

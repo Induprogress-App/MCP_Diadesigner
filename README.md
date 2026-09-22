@@ -186,10 +186,25 @@ tools do not understand elsewhere in the document survives untouched.
 Every write creates a timestamped `.bak-<timestamp>` copy next to the file
 unless you pass `backup: false`.
 
+## Rewriting LD programs to ST
+
+Beyond the MCP tools above, `bridge/` ships a small toolchain
+(`_parse_clip.js`, `edge_to_trig.js`, `gen_trig_csv.js`, `bool_normalize.js`,
+`compare_ld_st.js`) for the specific, repeatable job of converting a Ladder
+POU to Structured Text by hand in the DIADesigner UI, including how to turn
+the classic manual `EDGE_x` shadow-bit edge-detection pattern into proper
+`DFB_R_TRIG`/`DFB_F_TRIG` instances. See
+[docs/ld-to-st-workflow.md](docs/ld-to-st-workflow.md) for the full,
+step-by-step guide — **read its Pitfalls section before running this on a
+live project**; it documents several ways to silently corrupt or
+mis-translate logic that don't show up as a compile error.
+
 ## Documentation
 
-See [docs/diadesigner14.md](docs/diadesigner14.md) for the full reference,
-including verified behaviour and known gaps.
+- [docs/diadesigner14.md](docs/diadesigner14.md) — full tool reference,
+  verified behaviour and known gaps
+- [docs/ld-to-st-workflow.md](docs/ld-to-st-workflow.md) — step-by-step LD →
+  ST conversion workflow and pitfalls
 
 ## License
 

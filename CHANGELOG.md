@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `docs/ld-to-st-workflow.md`: a step-by-step guide for converting an LD POU
+  to ST using the `bridge/` scripts, written up from doing this at scale on a
+  real project. Covers the full chain (`_parse_clip.js` → `edge_to_trig.js`
+  → `gen_trig_csv.js` → paste → compile → optional `compare_ld_st.js` check)
+  and documents five pitfalls hit during development, most importantly that
+  **FB instance and coil names are not reliably scoped per POU** on this
+  platform — an identically-named `DFB_R_TRIG` instance declared locally in
+  two different POUs silently shares edge-tracking state, freezing whichever
+  POU's call runs later in the scan with no compile error.
+- `bridge/edge_to_trig.js` and `bridge/gen_trig_csv.js` are now committed
+  (previously local-only working files): the `EDGE_x` shadow-bit → real
+  `DFB_R_TRIG`/`DFB_F_TRIG` transformer and its companion variable-table CSV
+  generator, referenced by the new workflow doc.
+- `docs/index.md` rewritten — previously a generic template pointing at
+  files that don't exist in this repo (`examples.md`, `api.md`,
+  `troubleshooting.md`, `extensions.md`) and omitting `diadesigner14.md`
+  entirely.
+
+### Fixed
+- `bridge/_parse_clip.js` now prints a usage message and exits 1 when run
+  with no arguments, instead of an uncaught `TypeError`.
+
 ### Fixed (critical, live re-verification session)
 - **The `rowCount` heuristic from the previous fix was wrong and has been replaced.**
   Direct visual inspection of the Ladder canvas (zooming into the actual diagram in

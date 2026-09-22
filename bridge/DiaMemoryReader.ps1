@@ -15,7 +15,9 @@ param(
   [int]$MaxNetworks = 8000,
   [switch]$OnlyCommented,
   [string]$PouName = '',
-  [switch]$ListPous
+  [switch]$ListPous,
+  [switch]$RunPou,
+  [string]$PouNamesFile = ''
 )
 $ErrorActionPreference='Continue'
 
@@ -58,6 +60,11 @@ try {
 try {
   if ($ListPous) {
     $json = [DiaMemoryReader]::ListPous($TargetPid)
+  } elseif ($RunPou -and $PouNamesFile) {
+    $names = [IO.File]::ReadAllLines($PouNamesFile)
+    $json = [DiaMemoryReader]::RunPous($TargetPid, $names, $MaxNetworks, [bool]$OnlyCommented)
+  } elseif ($RunPou) {
+    $json = [DiaMemoryReader]::RunPou($TargetPid, $PouName, $MaxNetworks, [bool]$OnlyCommented)
   } else {
     $json = [DiaMemoryReader]::Run($TargetPid, $MaxNetworks, [bool]$OnlyCommented, $PouName)
   }
