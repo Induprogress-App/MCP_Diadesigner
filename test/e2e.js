@@ -97,6 +97,13 @@ async function call(name, args, options = {}) {
   }
 }
 
+let validator0 = null;
+try {
+  validator0 = require("fast-xml-parser").XMLValidator;
+} catch {
+  // optional dev dependency
+}
+
 (async () => {
   console.log(`workspace: ${WS}\n`);
   await send("initialize", {
@@ -369,6 +376,48 @@ async function call(name, args, options = {}) {
       skipped++;
       console.log(`  skip ${file} (install fast-xml-parser to validate)`);
     }
+  }
+
+  console.log("\n== st_to_export (AS) ==");
+  const stDir = path.join(WS, "st");
+  fs.mkdirSync(stDir);
+  const w = (name, text) => fs.writeFileSync(path.join(stDir, name), text);
+  w("EnumMode.st", "TYPE EnumMode :\n(\n    ModeOff := 0,\n    ModeAuto := 3\n);\nEND_TYPE\n");
+  w("DutPar.st", "TYPE DutPar :\nSTRUCT\n    A : INT := 150;  (* D20000 *)\n    Spare : ARRAY[17..99] OF INT;\nEND_STRUCT\nEND_TYPE\n");
+  w("FbMot.st", "FUNCTION_BLOCK FbMot\nVAR_INPUT\n    Run : BOOL;\n    Enable : BOOL;\nEND_VAR\nVAR_OUTPUT\n    Out : BOOL;\n    Fault : BOOL;\nEND_VAR\n\nOut := Run AND Enable;\nFault := FALSE;\n");
+  w("GVL_A.st", "VAR_GLOBAL\n    Md : EnumMode;  (* D100 - mode *)\n    Ok : BOOL;      (* M1 - ok *)\n    Par : DutPar;   (* D20000 *)\n    Mot : FbMot;    (* M3 motor label, not an address *)\nEND_VAR\n");
+  w("GVL_Hw.st", "VAR_GLOBAL\n    X0_0 : BOOL;\nEND_VAR\n");
+  w("Io.st", "PROGRAM Io\nVAR\nEND_VAR\n\nOk := X0_0;\n");
+  w("Main.st", "PROGRAM Main\nVAR\nEND_VAR\n\nIF Md = ModeAuto THEN\n    Mot(Run := Ok, Enable := Ok AND NOT Mot.Fault);\nEND_IF;\n");
+  const st = await call("st_to_export", {
+    stPaths: ["st"], outputPath: "st.EXPORT", skipObjects: ["GVL_Hw"], directIo: true, taskPrograms: ["Io", "Main"]
+  });
+  check("st_to_export lists objects", st.dataTypes && st.dataTypes.length === 2 && st.pous.includes("Main"), JSON.stringify(st));
+  check("st_to_export: addresses only on non-FB globals", st.globalVariables === 4 && st.withAddress === 3, JSON.stringify(st));
+  const stXml = fs.readFileSync(path.join(WS, "st.EXPORT"), "utf8");
+  check("enum value qualified", stXml.includes("Md = EnumMode.ModeAuto"));
+  check("expression argument hoisted", stXml.includes("Mot_Enable := Ok AND NOT Mot.Fault;") && stXml.includes("Enable := Mot_Enable"));
+  check("direct I/O address", stXml.includes("Ok := X0.0;"));
+  check("one group per POU variable", (stXml.match(/<outputVars>/g) || []).length === 2);
+  check("task order kept", stXml.indexOf('name="Io" typeName="Io"') < stXml.indexOf('name="Main" typeName="Main"'));
+  if (validator0) {
+    check("st.EXPORT is well-formed", validator0.validate(stXml) === true);
+  }
+
+  console.log("\n== hosted AS project (opt-in via env DIA_AS_TEST_PROJECT) ==");
+  if (process.env.DIA_AS_TEST_PROJECT && fs.existsSync(process.env.DIA_AS_TEST_PROJECT)) {
+    const srcDir = path.dirname(process.env.DIA_AS_TEST_PROJECT);
+    const dstDir = path.join(WS, "asproj");
+    fs.cpSync(srcDir, dstDir, { recursive: true });
+    const proj = path.join(dstDir, path.basename(process.env.DIA_AS_TEST_PROJECT));
+    const imp = await call("import_export_into_program", { projectPath: proj, exportPath: "st.EXPORT", clean: true, compile: true });
+    check("import counts", imp.import && imp.import.pous === 3, JSON.stringify(imp.import));
+    check("hosted compile has 0 errors", imp.compile && imp.compile.errorCount === 0, imp.compile && imp.compile.report);
+    const cmp = await call("compile_program", { programPath: proj });
+    check("compile_program on .diade works", cmp.ok === true && typeof cmp.report === "string", JSON.stringify(cmp).slice(0, 200));
+  } else {
+    skipped += 3;
+    console.log("  skip set DIA_AS_TEST_PROJECT to an empty AS .diade to run the hosted import/compile checks");
   }
 
   console.log(`\n==== ${passed} passed, ${failed} failed, ${skipped} skipped ====`);

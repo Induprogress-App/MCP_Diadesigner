@@ -114,7 +114,14 @@ but DIADesigner remains the authority on whether code is valid.
 - `read_program_header` — `PLC.prog` / `PLC.diaobj` header fields
 - `read_program` — loads a container through DIADesigner's own loader and
   lists its POUs and data types
-- `compile_program` — runs the ISP compiler (`mode: "check"` validates only)
+- `compile_program` — runs the ISP compiler (`mode: "check"` validates only);
+  given a `.diade` (AS series) it hosts the real DIADesigner in-process and
+  returns the compiler's error list
+- `st_to_export` — generates a project fragment from `.st` files (enums,
+  structs, FBs, programs, global lists with addresses, task order)
+- `import_export_into_program` — merges that fragment into a `.diade` (AS),
+  compiles it and optionally saves (backup first, DIADesigner must be closed);
+  see `docs/diadesigner14.md`
 - `read_program_memory` — reads the decrypted program straight out of a
   *running* DIADesigner process's memory (ClrMD, read-only); the project must
   be open in DIADesigner first
