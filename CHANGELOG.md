@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- AS-series (Delta AS228 and family) support through an in-process host of the
+  real DIADesigner 1.14 (`bridge/host/DiaHost.cs`, `src/dia14/host.ts`): the
+  application is started from a private runtime directory, opens the `.diade`,
+  runs one request (inspect / import / compile / save) and exits, with no UI
+  interaction. Needed because the AS compiler cannot be created without the
+  application shell and the PowerShell bridge only covers DVP/ISP.
+- `st_to_export`: generator of a project fragment (`.EXPORT`-style XML) from
+  IEC 61131-3 ST files (enum and struct types, function blocks, programs,
+  `VAR_GLOBAL` lists with addresses taken from the line comment, task order),
+  including the AS-specific rewrites (qualified enum values, helper variables
+  for expression call arguments, `X0_3` to `X0.3`).
+- `import_export_into_program`: merges such a fragment into a `.diade`
+  container, optionally compiles and saves; backs the project directory up
+  first and refuses to save while DIADesigner.exe is running.
+- `compile_program` and `read_program` accept a `.diade` and, for AS projects,
+  return the real compiler diagnostics (error code, program, line, warning and
+  error counts, code size).
+- `bridge/host/Prelude.cs`, `bridge/host/experiment_import_compile.cs` and
+  `bridge/DiaIl.ps1`: the reflection/IL helpers and the experiment the host was
+  derived from.
+- Tests: offline `st_to_export` assertions in `npm test`; set
+  `DIA_AS_TEST_PROJECT` to an empty AS `.diade` to also run the hosted
+  import/compile checks.
+
+### Added (earlier, unreleased)
 - `docs/ld-to-st-workflow.md`: a step-by-step guide for converting an LD POU
   to ST using the `bridge/` scripts, written up from doing this at scale on a
   real project. Covers the full chain (`_parse_clip.js` → `edge_to_trig.js`

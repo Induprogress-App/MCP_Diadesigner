@@ -72,7 +72,49 @@ DIADesigner remains the authority on whether code is valid.
 - `read_program_header` — `PLC.prog` / `PLC.diaobj` header fields
 - `read_program` — loads a container through DIADesigner's own loader and lists
   its POUs and data types
-- `compile_program` — runs the ISP compiler (`mode: "check"` validates only)
+- `compile_program` — runs the ISP compiler (`mode: "check"` validates only);
+  for a `.diade` (AS) it hosts the real application, see below
+- `st_to_export`, `import_export_into_program` — ST sources into an AS project (below)
+
+### AS projects: hosted compile and ST import
+
+For AS-series projects (`DeltaIA.DIAStudio.PLC.AS`, e.g. AS228R) the ISP
+compiler cannot be created without the application shell, and the
+PowerShell bridge only covers DVP/ISP. These tools therefore start the real
+`DIADesigner.exe` in-process (`bridge/host/DiaHost.cs`, built on first use
+with the .NET Framework `csc` into `%LOCALAPPDATA%\diadesigner-mcp\host-*`),
+open the `.diade` like a double click, run one request and exit. No UI
+interaction, no window to click. Each call takes about 15-30 seconds.
+
+- `compile_program` and `read_program` accept a `.diade` path. The compile
+  result is the compiler's own error list (error code, program, line) with the
+  warning/error counts and code size. Nothing is written.
+- `st_to_export` generates a project fragment (`.EXPORT`-style XML) from `.st`
+  files: ENUM / STRUCT types, function blocks, programs and `VAR_GLOBAL`
+  lists. A global's address is read from the first comment of its line
+  (`(* M0 - text *)`); function block instances take none. It also applies the
+  rewrites AS needs: bare enum values become `Enum.Value`, expression
+  arguments of FB calls move into helper variables, `X0_3` becomes `X0.3`
+  (`directIo`), and `taskPrograms` fills the first cyclic task in call order.
+- `import_export_into_program` merges such a fragment into the project
+  (same-name POUs, types and tag-table variables are replaced, `clean` wipes
+  user content first), optionally compiles, and with `save: true` writes the
+  project. Saving is refused while a `DIADesigner.exe` runs and first copies
+  the project directory to `<dir>_backup_<timestamp>`; the application adds its
+  own `.diabak`.
+
+Delta XML rules learned the hard way (all handled by `st_to_export`): global
+variables must have scope `VAR` (not `VAR_GLOBAL`) or the native compile
+silently produces nothing; DUT/ENUM need a `codeSection` with the `TYPE` text;
+only the first variable of an `inputVars`/`outputVars`/`localVars` group
+survives, so every variable gets its own group; the ST body is a CDATA `<ST>`.
+
+AS compiler limits met on AS228R (the reason for the rewrites): a program
+cannot call a program and has no parameters; `RETURN` is not allowed in a
+program; no `*_TO_*` conversions (`DINT_TO_INT` is excluded for the model) and
+DINT/INT are not mixed implicitly; FB call parameters must be variables,
+members or literals; timers are `IF Run THEN TMR(Tn, preset); END_IF;` with the
+contact read as `Tn`; names such as `Step` and `Cnt` are reserved words.
 
 ### Program content (PLCopen `.EXPORT`)
 

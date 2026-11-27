@@ -37,6 +37,8 @@ import {
   readProgramMemory
 } from "./bridge.js";
 import * as path from "path";
+import { formatCompileReport, importIntoProgram, runHost } from "./host.js";
+import { stToExport } from "./stExport.js";
 import {
   createEmptyExport,
   createPou,
@@ -248,19 +250,86 @@ export function createServer(config: DiaConfig): McpServer {
 
   server.tool(
     "read_program",
-    "Loads a PLC program container through DIADesigner's own loader and lists the POUs and data types it contains.",
-    { programPath: z.string().describe("Path to PLC.prog or PLC.diaobj") },
-    async ({ programPath }) => guard(async () => loadProgram(config, programPath))
+    "Loads a PLC program container through DIADesigner's own loader and lists the POUs and data types it contains. A .diade project (AS series, DIADesigner 1.14) is opened by the in-process host instead and returns POUs, data types, tag tables and task assignment.",
+    { programPath: z.string().describe("Path to PLC.prog / PLC.diaobj, or to a .diade project (AS)") },
+    async ({ programPath }) =>
+      guard(async () => {
+        if (programPath.toLowerCase().endsWith(".diade")) {
+          return runHost(config, resolveWorkspacePath(config.workspaceDir, programPath), { action: "inspect" });
+        }
+        return loadProgram(config, programPath);
+      })
   );
 
   server.tool(
     "compile_program",
-    "Compiles (or only syntax-checks) a PLC program container using DIADesigner's ISP compiler.",
+    "Compiles (or only syntax-checks) a PLC program container using DIADesigner's ISP compiler. For a .diade project (AS series) the real application is hosted in-process (no UI, nothing written) and the result is the compiler's error list with error code, program and line.",
     {
-      programPath: z.string(),
-      mode: z.enum(["compile", "check"]).optional().describe("check runs validation only; default is compile")
+      programPath: z.string().describe("Path to PLC.prog / PLC.diaobj, or to a .diade project (AS)"),
+      mode: z.enum(["compile", "check"]).optional().describe("check runs validation only; default is compile (ignored for .diade)")
     },
-    async ({ programPath, mode }) => guard(async () => compileProgram(config, programPath, mode ?? "compile"))
+    async ({ programPath, mode }) =>
+      guard(async () => {
+        if (programPath.toLowerCase().endsWith(".diade")) {
+          const r = await runHost(config, resolveWorkspacePath(config.workspaceDir, programPath), { action: "compile" });
+          if (!r.compile) return { ok: false, error: r.error, blockedByDialog: r.blockedByDialog, log: r.log };
+          return {
+            ok: true,
+            errorCount: r.compile.errorCount,
+            warningCount: r.compile.warningCount,
+            exeSize: r.compile.exeSize,
+            report: formatCompileReport(r.compile),
+            messages: r.compile.messages
+          };
+        }
+        return compileProgram(config, programPath, mode ?? "compile");
+      })
+  );
+
+  server.tool(
+    "st_to_export",
+    "Generates a DIADesigner project fragment (.EXPORT-style XML) from IEC 61131-3 Structured Text files: enumerations, structures, function blocks, programs and global variable lists (address read from the first comment of a line, e.g. (* M0 - text *)). Applies the AS rewrites (qualified enum values, helper variables for expression call arguments) and puts the given programs into the first cyclic task in order. Feed the result to import_export_into_program.",
+    {
+      stPaths: z.array(z.string()).describe("ST files and/or directories (one object per file, file name = object name)"),
+      outputPath: z.string().describe("Where to write the generated XML"),
+      skipObjects: z.array(z.string()).optional().describe("Object (file) names to skip, e.g. GVL_Hw, PlcPrg"),
+      skipTypes: z.array(z.string()).optional().describe("Drop variables of these types and POUs with these names"),
+      renames: z.record(z.string()).optional().describe("Whole-word identifier renames, e.g. Step -> StepNo"),
+      directIo: z.boolean().optional().describe("Rewrite X0_3 / Y1_5 into direct addresses X0.3 / Y1.5 in ST bodies"),
+      taskPrograms: z.array(z.string()).optional().describe("Programs for the cyclic task, in call order (AS cannot call a program from a program)"),
+      taskPriority: z.number().optional().describe("Task slot (priority attribute); default 0"),
+      qualifyEnums: z.boolean().optional().describe("Qualify bare enum values as Enum.Value (default true)"),
+      hoistCallArgs: z.boolean().optional().describe("Move expression arguments of FB calls into helper variables (default true)")
+    },
+    async ({ stPaths, outputPath, ...options }) =>
+      guard(async () =>
+        stToExport(
+          stPaths.map((p) => resolveWorkspacePath(config.workspaceDir, p)),
+          resolveWorkspacePath(config.workspaceDir, outputPath),
+          options
+        )
+      )
+  );
+
+  server.tool(
+    "import_export_into_program",
+    "Merges an .EXPORT-style XML fragment (e.g. from st_to_export) into a .diade project (AS series) by hosting the real DIADesigner in-process, then optionally compiles and saves. Same-name POUs / data types / tag-table variables are replaced; clean=true first removes all user POUs, data types and tag-table variables. Saving needs DIADesigner closed and backs the project directory up first.",
+    {
+      projectPath: z.string().describe("Path to the .diade project"),
+      exportPath: z.string().describe("XML fragment to merge"),
+      clean: z.boolean().optional().describe("Remove existing user content first (default false)"),
+      compile: z.boolean().optional().describe("Compile after the import (default true)"),
+      save: z.boolean().optional().describe("Write the result into the project (default false: dry run)"),
+      backup: z.boolean().optional().describe("Back the project directory up before saving (default true)"),
+      openTimeoutSec: z.number().optional()
+    },
+    async ({ projectPath, exportPath, ...rest }) =>
+      guard(async () =>
+        importIntoProgram(config, resolveWorkspacePath(config.workspaceDir, projectPath), {
+          exportPath: resolveWorkspacePath(config.workspaceDir, exportPath),
+          ...rest
+        })
+      )
   );
 
   server.tool(
